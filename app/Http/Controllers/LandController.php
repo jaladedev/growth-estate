@@ -51,6 +51,7 @@ class LandController extends Controller
             'price_per_unit' => 'required|numeric',
             'total_units' => 'required|integer|min:1',
             'description' => 'nullable|string',
+            'images' => 'nullable|array',
             'images.*' => 'nullable|image|mimes:jpg,jpeg,png|max:2048', // Validation for multiple images
         ]);
 
@@ -66,32 +67,38 @@ class LandController extends Controller
             'description' => $validatedData['description'],
         ]);
 
-        // Handle image uploads if provided
+        
         if ($request->hasFile('images')) {
             foreach ($request->file('images') as $image) {
-                // Store each image and get the public path
+                // sanitize: ensure $image is an UploadedFile instance
+                if (!$image->isValid()) {
+                    continue;
+                }
                 $imagePath = $image->store('land_images', 'public');
 
-                // Save each image path in the LandImage table
                 $land->images()->create([
                     'image_path' => $imagePath
                 ]);
             }
         }
 
-        // Load the images and prepend the full URL to each image
-        $landWithImages = $land->load('images');
-        foreach ($landWithImages->images as $image) {
-            // Prepend the public URL to each image path
-            $image->image_path = Storage::url($image->image_path);
-        }
+        // Build response with full URLs (do not mutate DB fields)
+        $land->load('images');
+        $images = $land->images->map(function ($img) {
+            return [
+                'id' => $img->id,
+                'image_path' => Storage::url($img->image_path),
+            ];
+        });
 
-        // Return response with full image URLs
-        return response()->json([
+        $response = [
             'message' => 'Land created successfully',
-            'land' => $landWithImages
-        ], 201);
-    }
+            'land' => $land->toArray(),
+            'images' => $images,
+        ];
+
+        return response()->json($response, 201);
+        }
 
 
     public function buy(Request $request, $id)
