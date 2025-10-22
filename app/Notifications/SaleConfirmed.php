@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-class PurchaseConfirmed extends Notification implements ShouldQueue
+class SaleConfirmed extends Notification implements ShouldQueue
 {
     use Queueable;
 
@@ -32,7 +32,7 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
             'purchase_id' => $this->purchase->id,
             'units' => $this->purchase->units,
             'total_amount_paid' => $this->purchase->total_amount_paid,
-            'message' => 'Your purchase has been confirmed!',
+            'message' => 'Your sale has been confirmed!',
             'created_at' => now(),
         ];
     }
@@ -41,9 +41,9 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
     public function toMail($notifiable)
     {
         return (new MailMessage)
-                    ->subject('Purchase Confirmation')
-                    ->line('Your purchase of ' . $this->purchase->units . ' units has been confirmed!')
-                    ->action('View Purchase', url('/purchases/' . $this->purchase->id))
+                    ->subject('Sale Confirmation')
+                    ->line('Your sale of ' . $this->purchase->units . ' units has been confirmed!')
+                    ->action('View Sale', url('/purchases/' . $this->purchase->id))
                     ->line('Thank you for your purchase!');
     }
 
