@@ -68,7 +68,14 @@ class PurchaseController extends Controller
                 );
 
                 // Notify the user of the successful purchase
-                $user->notify(new PurchaseConfirmed($transaction));
+             DB::table('notifications')->insert([
+                'user_id' => $user->id,
+                'type' => 'purchase',
+                'title' => 'Purchase Confirmed',
+                'message' => "Your purchase of {$request->units} units has been confirmed.",
+                'is_read' => false,
+                'created_at' => now(),
+            ]);
             });
 
             return response()->json(['message' => 'Purchase successful', 'reference' => $referenceCode, 'amount_paid' => $totalPrice]);
@@ -85,7 +92,9 @@ class PurchaseController extends Controller
         $request->validate(['units' => 'required|numeric|min:1']);
         
         // Fetch the user's purchase record for the land
-        $purchase = Purchase::where('user_id', $user->id)->where('land_id', $landId)->firstOrFail();
+        $purchase = Purchase::where('user_id', $user->id)
+            ->where('land_id', $landId)
+            ->firstOrFail();
         
         // Check if the user has enough units to sell
         if ($purchase->units < $request->units) {
@@ -95,42 +104,61 @@ class PurchaseController extends Controller
         // Fetch the land details
         $land = Land::findOrFail($landId);
 
-        // Calculate the total amount the user will receive for selling the units
+        // Calculate the total amount received for selling the units
         $totalAmountReceived = $request->units * $land->price_per_unit;
 
         // Generate a unique reference code for the transaction
         $referenceCode = 'SALE-' . now()->format('Ymd-His') . '-' . Str::random(6);
 
-        // Use a transaction to update all tables atomically
+        // Perform atomic updates
         DB::transaction(function () use ($user, $land, $purchase, $request, $totalAmountReceived, $referenceCode) {
-            // Update the user's purchase record for this land
+            // Decrease purchased units
             $purchase->decrement('units', $request->units);
-            $purchase->total_amount_paid -= $request->units * $land->price_per_unit;
-            $purchase->save();  // Save the updated purchase record
 
-            // Update the land's available units
+            // Update purchase financials
+            $purchase->total_amount_paid -= $request->units * $land->price_per_unit;
+
+            // Update sold tracking for this purchase
+            $purchase->increment('units_sold', $request->units);
+            $purchase->increment('total_amount_received', $totalAmountReceived);
+            $purchase->sell_date = now();
+
+            $purchase->save();
+
+            // Update land available units
             $land->increment('available_units', $request->units);
 
-            // Increase the user's balance by the amount received from the sale
+            // Increase user's wallet balance
             $user->increment('balance', $totalAmountReceived);
 
-            // Create a transaction record for the sale
+            // Log transaction
             Transaction::create([
                 'land_id' => $land->id,
                 'user_id' => $user->id,
                 'units' => -$request->units, // Negative because it's a sale
                 'price' => -$totalAmountReceived, // Negative because it's a sale
                 'status' => 'completed',
-                'reference' => $referenceCode, // Store the reference code
+                'reference' => $referenceCode,
             ]);
         });
 
-        // Return a success response with the total amount received
+        // Create notification
+        DB::table('notifications')->insert([
+            'user_id' => $user->id,
+            'type' => 'Sale',
+            'title' => 'Sale Confirmed',
+            'message' => "Your sale of {$request->units} units has been confirmed.",
+            'is_read' => false,
+            'created_at' => now(),
+        ]);
+
+        // Return response
         return response()->json([
             'message' => 'Units sold successfully',
             'reference' => $referenceCode,
-            'amount_received' => $totalAmountReceived
+            'amount_received' => $totalAmountReceived,
         ]);
     }
+
 
 }

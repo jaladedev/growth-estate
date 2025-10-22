@@ -20,6 +20,7 @@ class Purchase extends Model
         'units_sold',           // Number of units sold
         'total_amount_received', // Total amount received from sales
         'reference',
+        'sell_date',            // Date of the sale
     ];
 
     // Cast attributes to appropriate data types
@@ -27,7 +28,9 @@ class Purchase extends Model
       'purchase_date' => 'datetime',
       'withdrawal_date' => 'datetime',
       'units_sold' => 'integer',           
-      'total_amount_received' => 'decimal', 
+      'total_amount_received' => 'decimal:2', 
+      'total_amount_paid' => 'decimal:2',
+      'sell_date' => 'datetime',
     ];
 
     // Relationship with the User model
