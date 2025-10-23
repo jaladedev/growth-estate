@@ -79,9 +79,9 @@ Route::middleware('jwt.auth')->group(function () {
         Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
 
         //User notifications
-        Route::get('/notifications', [NotificationController::class, 'getNotifications']);
-        Route::get('/notifications/unread', [NotificationController::class, 'getUnreadNotifications']);
-        Route::post('/notifications/read', [NotificationController::class, 'markAllAsRead']);
+            Route::get('/notifications', [NotificationController::class, 'getNotifications']);
+            Route::get('/notifications/unread', [NotificationController::class, 'getUnreadNotifications']);
+            Route::post('/notifications/read', [NotificationController::class, 'markAllAsRead']);
 
         // Balance
         Route::get('/user/balance', function () {
