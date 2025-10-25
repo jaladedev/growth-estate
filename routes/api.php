@@ -53,9 +53,12 @@ Route::middleware('jwt.auth')->group(function () {
 
         // Route to get all lands and units owned by the user
         Route::get('/user/lands', [UserController::class, 'getAllUserLands']);
+        Route::get('/user/stats', [UserController::class, 'getUserStats']);
+        Route::get('/transactions/user', [UserController::class, 'getUserTransactions']);
+
 
         // // Transaction management routes
-        // Route::prefix('transactions')->group(function () {
+        // Route::prefix('transactions')->group(function () {   
         //     Route::get('/', [TransactionController::class, 'index']); // Get all transactions
         //     Route::get('/users/{user_id}', [TransactionController::class, 'getByUser']); // Get transactions by user ID
         //     Route::get('/lands/{land_id}', [TransactionController::class, 'getByLand']); // Get transactions by land ID

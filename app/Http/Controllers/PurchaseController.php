@@ -53,6 +53,7 @@ class PurchaseController extends Controller
                     'price'     => $totalPrice,
                     'status'    => 'completed',
                     'reference' => $referenceCode,
+                    'message'   => 'Units have been purchased successfully ',
                 ]);
 
                 // Update user's balance
@@ -148,6 +149,7 @@ class PurchaseController extends Controller
                     'price'     => -$totalAmountReceived,
                     'status'    => 'completed',
                     'reference' => $referenceCode,
+                    'message'   => 'Units have been sold successfully ',
                 ]);
 
                 // Notify user 

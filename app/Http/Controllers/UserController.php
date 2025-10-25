@@ -9,6 +9,8 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
+use App\Models\Deposit;
+use App\Models\Withdrawal;
 
 class UserController extends Controller
 {
@@ -136,4 +138,115 @@ class UserController extends Controller
               ], 500);
           }
 }
+
+    public function getUserStats()
+{
+    try {
+        $user = JWTAuth::parseToken()->authenticate();
+
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        Log::info('User found', ['id' => $user->id]);
+
+        $landsOwned = $user->purchases()->distinct('land_id')->count('land_id');
+        $unitsOwned = $user->purchases()->sum('units');
+        $totalInvested = $user->purchases()->sum('total_amount_paid');
+
+        // If user->withdrawals() is not defined, this line will crash:
+        $totalWithdrawn = method_exists($user, 'withdrawals')
+            ? $user->withdrawals()->where('status', 'completed')->sum('amount')
+            : 0;
+
+        $pendingWithdrawals = method_exists($user, 'withdrawals')
+            ? $user->withdrawals()->where('status', 'pending')->count()
+            : 0;
+
+        $balance = $user->balance ?? 0;
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'lands_owned' => $landsOwned,
+                'units_owned' => $unitsOwned,
+                'total_invested' => $totalInvested,
+                'total_withdrawn' => $totalWithdrawn,
+                'pending_withdrawals' => $pendingWithdrawals,
+                'balance' => $balance,
+            ],
+        ]);
+    } catch (\Exception $e) {
+        Log::error('getUserStats error', ['message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Error fetching stats',
+            'error' => $e->getMessage(),
+        ], 500);
+    }
+}
+
+    public function getUserTransactions()
+{
+    try {
+        $user = JWTAuth::parseToken()->authenticate();
+
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $deposits = Deposit::where('user_id', $user->id)
+            ->select('id', 'amount', 'status', 'created_at')
+            ->get()
+            ->map(fn($d) => [
+                'type' => 'Deposit',
+                'amount' => $d->amount,
+                'status' => ucfirst($d->status),
+                'date' => $d->created_at->toIso8601String(),
+            ]);
+
+        $withdrawals = Withdrawal::where('user_id', $user->id)
+            ->select('id', 'amount', 'status', 'created_at')
+            ->get()
+            ->map(fn($w) => [
+                'type' => 'Withdrawal',
+                'amount' => $w->amount,
+                'status' => ucfirst($w->status),
+                'date' => $w->created_at->toIso8601String(),
+            ]);
+
+        $purchases = Purchase::where('user_id', $user->id)
+            ->select('id', 'land_id', 'total_amount_paid', 'units', 'purchase_date')
+            ->with('land:id,title')
+            ->get()
+            ->map(fn($p) => [
+                'type' => 'Purchase',
+                'land' => $p->land->title ?? 'Unknown Land',
+                'amount' => $p->total_amount_paid,
+                'units' => $p->units,
+                'status' => 'Success',
+                'date' => $p->purchase_date ?? $p->created_at->toIso8601String(),
+            ]);
+
+        $transactions = collect()
+            ->merge($deposits)
+            ->merge($withdrawals)
+            ->merge($purchases)
+            ->sortByDesc('date')
+            ->values();
+
+        return response()->json([
+            'success' => true,
+            'data' => $transactions,
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error fetching transactions',
+            'error' => $e->getMessage(),
+        ], 500);
+    }
+}
+
 }
