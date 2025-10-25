@@ -25,6 +25,7 @@ Route::prefix('password')->group(function () {
     Route::post('/reset', [AuthController::class, 'resetPassword']); // Reset password with code
 });
 
+ Route::get('/land', [LandController::class, 'index']); 
 // Deposit callback route (signed to prevent unauthorized access)
 Route::get('/deposit/callback', [DepositController::class, 'handleDepositCallback'])->name('deposit.callback');
 
