@@ -30,7 +30,7 @@ class Withdrawal extends Model
     }
 
     /**
-     * Scope for completed deposits
+     * Scope for completed withdrawals
      */
     public function scopeCompleted($query)
     {

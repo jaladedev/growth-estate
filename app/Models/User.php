@@ -18,8 +18,10 @@ class User extends Authenticatable implements JWTSubject
         'email',
         'password',
         'balance',
-        'bank_account_number',
+        'account_number',
         'bank_code',
+        'bank_name',
+        'account_name',
         'uid',
         'verification_code',
         'verification_code_expiry',
@@ -30,7 +32,7 @@ class User extends Authenticatable implements JWTSubject
     protected $hidden = [
         'password',
         'remember_token',
-        'bank_account_number',
+        'account_number',
         'bank_code',
     ];
 
