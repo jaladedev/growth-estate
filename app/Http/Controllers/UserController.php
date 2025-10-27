@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
 use App\Models\Deposit;
 use App\Models\Withdrawal;
+use App\Models\Transaction;
 
 class UserController extends Controller
 {
@@ -187,66 +188,75 @@ class UserController extends Controller
     }
 }
 
-    public function getUserTransactions()
-{
-    try {
-        $user = JWTAuth::parseToken()->authenticate();
+   public function getUserTransactions()
+    {
+        try {
+            $user = JWTAuth::parseToken()->authenticate();
 
-        if (!$user) {
-            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            }
+
+            // Fetch deposits
+            $deposits = Deposit::where('user_id', $user->id)
+                ->select('id', 'amount', 'status', 'created_at')
+                ->get()
+                ->map(fn($d) => [
+                    'type' => 'Deposit',
+                    'amount' => $d->amount,
+                    'status' => ucfirst($d->status),
+                    'date' => $d->created_at->toIso8601String(),
+                ]);
+
+            // Fetch withdrawals
+            $withdrawals = Withdrawal::where('user_id', $user->id)
+                ->select('id', 'amount', 'status', 'created_at')
+                ->get()
+                ->map(fn($w) => [
+                    'type' => 'Withdrawal',
+                    'amount' => $w->amount,
+                    'status' => ucfirst($w->status),
+                    'date' => $w->created_at->toIso8601String(),
+                ]);
+
+            // Fetch land transactions (purchases & sales)
+            $landTransactions = Transaction::where('user_id', $user->id)
+                ->select('id', 'land_id', 'units', 'amount', 'status', 'created_at')
+                ->with('land:id,title')
+                ->get()
+                ->map(function ($t) {
+                    $isPurchase = $t->units > 0;
+                    return [
+                        'type' => $isPurchase ? 'Purchase' : 'Sale',
+                        'land' => $t->land->title ?? 'Unknown Land',
+                        'amount' => abs($t->amount), 
+                        'units' => abs($t->units),
+                        'status' => ucfirst($t->status),
+                        'date' => $t->created_at->toIso8601String(),
+                    ];
+                });
+
+            // Combine all
+            $transactions = collect()
+                ->merge($deposits)
+                ->merge($withdrawals)
+                ->merge($landTransactions)
+                ->sortByDesc('date')
+                ->values();
+
+            return response()->json([
+                'success' => true,
+                'data' => $transactions,
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching transactions',
+                'error' => $e->getMessage(),
+            ], 500);
         }
-
-        $deposits = Deposit::where('user_id', $user->id)
-            ->select('id', 'amount', 'status', 'created_at')
-            ->get()
-            ->map(fn($d) => [
-                'type' => 'Deposit',
-                'amount' => $d->amount,
-                'status' => ucfirst($d->status),
-                'date' => $d->created_at->toIso8601String(),
-            ]);
-
-        $withdrawals = Withdrawal::where('user_id', $user->id)
-            ->select('id', 'amount', 'status', 'created_at')
-            ->get()
-            ->map(fn($w) => [
-                'type' => 'Withdrawal',
-                'amount' => $w->amount,
-                'status' => ucfirst($w->status),
-                'date' => $w->created_at->toIso8601String(),
-            ]);
-
-        $purchases = Purchase::where('user_id', $user->id)
-            ->select('id', 'land_id', 'total_amount_paid', 'units', 'purchase_date')
-            ->with('land:id,title')
-            ->get()
-            ->map(fn($p) => [
-                'type' => 'Purchase',
-                'land' => $p->land->title ?? 'Unknown Land',
-                'amount' => $p->total_amount_paid,
-                'units' => $p->units,
-                'status' => 'Success',
-                'date' => $p->purchase_date ?? $p->created_at->toIso8601String(),
-            ]);
-
-        $transactions = collect()
-            ->merge($deposits)
-            ->merge($withdrawals)
-            ->merge($purchases)
-            ->sortByDesc('date')
-            ->values();
-
-        return response()->json([
-            'success' => true,
-            'data' => $transactions,
-        ]);
-    } catch (\Exception $e) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Error fetching transactions',
-            'error' => $e->getMessage(),
-        ], 500);
     }
-}
+
 
 }

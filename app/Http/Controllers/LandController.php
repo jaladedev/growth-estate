@@ -157,7 +157,7 @@ class LandController extends Controller
             'land_id' => $land->id,
             'user_id' => $validatedData['buyer_id'],
             'percentage' => $purchase_units,
-            'price' => $purchase_units * $land->price_per_unit,
+            'amount' => $purchase_units * $land->price_per_unit,
         ]);
 
         return response()->json(['message' => 'Purchase successful'], 200);

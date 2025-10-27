@@ -50,7 +50,7 @@ class PurchaseController extends Controller
                     'land_id'   => $land->id,
                     'user_id'   => $user->id,
                     'units'     => $request->units,
-                    'price'     => $totalPrice,
+                    'amount'     => $totalPrice,
                     'status'    => 'completed',
                     'reference' => $referenceCode,
                     'message'   => 'Units have been purchased successfully ',
@@ -77,7 +77,7 @@ class PurchaseController extends Controller
 
                 // Increment values safely (no DB::raw needed)
                 $purchase->increment('units', $transaction->units);
-                $purchase->increment('total_amount_paid', $transaction->price);
+                $purchase->increment('total_amount_paid', $transaction->amount);
                 $purchase->purchase_date = now();
                 $purchase->reference = $referenceCode;
                 $purchase->save();
@@ -146,7 +146,7 @@ class PurchaseController extends Controller
                     'land_id'   => $land->id,
                     'user_id'   => $user->id,
                     'units'     => -$request->units, // negative for sold units
-                    'price'     => -$totalAmountReceived,
+                    'amount'     => -$totalAmountReceived,
                     'status'    => 'completed',
                     'reference' => $referenceCode,
                     'message'   => 'Units have been sold successfully ',
