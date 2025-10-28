@@ -35,8 +35,11 @@ Route::middleware('jwt.auth')->group(function () {
     Route::get('/me', [AuthController::class, 'me']); // Returns current logged-in user
     Route::post('/refresh', [AuthController::class, 'refresh']);
 
+
     // Email verified routes (only accessible if email is verified)
     Route::middleware('verified')->group(function () {
+
+          Route::post('/user/change-password', [AuthController::class, 'changePassword']); // Change password route
 
         // Logout route
         Route::post('/logout', [AuthController::class, 'logout']); // User logout

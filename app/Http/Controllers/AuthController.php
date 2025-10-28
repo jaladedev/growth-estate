@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log; 
 use Illuminate\Support\Facades\Hash;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
@@ -148,7 +149,7 @@ class AuthController extends Controller
             return $this->sendErrorResponse('Could not refresh token', 500, ['exception' => $e->getMessage()]);
         }
     }
-
+    
     // Password reset request using a verification code
     public function sendPasswordResetCode(Request $request)
     {
@@ -298,4 +299,62 @@ class AuthController extends Controller
     
         return $this->sendSuccessResponse([], 'A new verification code has been sent to your email.');
     }
+
+    public function changePassword(Request $request) 
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            Log::warning('Unauthenticated password change attempt');
+            return $this->sendErrorResponse('Unauthenticated.', 401);
+        }
+
+        // Validate input
+        try {
+            $request->validate([
+                'current_password' => 'required|string',
+                'new_password' => [
+                    'required', 'string', 'min:8', 'confirmed',
+                    'regex:/[A-Z]/',       // at least one uppercase letter
+                    'regex:/[a-z]/',       // at least one lowercase letter
+                    'regex:/[0-9]/',       // at least one digit
+                    'regex:/[@$!%*?&#]/',  // at least one special character
+                ],
+            ], [
+                'new_password.min' => 'The new password must be at least 8 characters long.',
+                'new_password.regex' => 'The new password must include at least one uppercase letter, one lowercase letter, one number, and one special character.',
+                'new_password.confirmed' => 'The new password confirmation does not match.',
+            ]);
+        } catch (ValidationException $e) {
+
+            return $this->sendErrorResponse('Password validation errors occurred', 422, $e->validator->errors());
+        }
+
+        try {
+            // Check current password
+            if (!Hash::check($request->current_password, $user->password)) {
+                return $this->sendErrorResponse('Current password is incorrect.', 400);
+            }
+
+            // Check if new password is different from current password
+            if (Hash::check($request->new_password, $user->password)) {
+                return $this->sendErrorResponse('New password cannot be the same as your current password.', 400);
+            }
+
+            // Update the user's password
+            $user->password = Hash::make($request->new_password);
+            $user->save();
+
+            return $this->sendSuccessResponse([], 'Password has been changed successfully.', 200);
+
+        } catch (\Exception $e) {
+            Log::error('Error while changing password', [
+                'user_id' => $user->id ?? null,
+                'exception' => $e->getMessage()
+            ]);
+
+            return $this->sendErrorResponse('An unexpected error occurred while changing the password.', 500);
+        }
+    }
+
 }    
