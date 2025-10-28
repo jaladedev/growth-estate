@@ -204,11 +204,23 @@ class UserController extends Controller
         });
 
         // ✅ Step 2: Validate bank name and retrieve bank code
-        $bank = collect($banks)->firstWhere('name', $request->bank_name);
-        if (!$bank) {
-            return response()->json(['error' => 'Invalid bank name provided.'], 400);
-        }
-        $bankCode = $bank['code'];
+        // $bank = collect($banks)->firstWhere('name', $request->bank_name);
+        // if (!$bank) {
+        //     return response()->json(['error' => 'Invalid bank name provided.'], 400);
+        // }
+        // $bankCode = $bank['code'];
+$bank = collect($banks)->firstWhere('name', $request->bank_name);
+
+if (!$bank) {
+    return response()->json(['error' => 'Invalid bank name provided.'], 400);
+}
+
+// ✅ Use test bank code "001" if in local/test environment
+if (app()->environment(['local', 'testing'])) {
+    $bankCode = '001';
+} else {
+    $bankCode = $bank['code'];
+}
 
         // ✅ Step 3: Verify account number via Paystack
         $resolveResponse = Http::withToken(config('services.paystack.secret_key'))
@@ -216,7 +228,10 @@ class UserController extends Controller
                 'account_number' => $request->account_number,
                 'bank_code' => $bankCode,
             ]);
-
+        \Log::info('🔍 Paystack resolve response', [
+    'status' => $resolveResponse->status(),
+    'body' => $resolveResponse->json(),
+]);
         if (!$resolveResponse->successful()) {
             return response()->json([
                 'error' => 'Failed to verify account number. Please try again.',

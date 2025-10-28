@@ -90,11 +90,6 @@ Route::middleware('jwt.auth')->group(function () {
             Route::get('/notifications/unread', [NotificationController::class, 'getUnreadNotifications']);
             Route::post('/notifications/read', [NotificationController::class, 'markAllAsRead']);
 
-        // Balance
-        Route::get('/user/balance', function () {
-            $user = auth()->user();
-            return response()->json(['balance' => $user->balance]);
-        });
         });
     
 // Paystack Webhook (Public - No Authentication)
