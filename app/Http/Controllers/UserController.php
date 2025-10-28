@@ -179,77 +179,108 @@ class UserController extends Controller
         return response()->json(['message' => 'Transaction PIN reset successfully.']);
     }
       // Update user's bank details using Paystack API
-      public function updateBankDetails(Request $request)
-      {
-          $user = JWTAuth::parseToken()->authenticate();
-      
-          // Validate the incoming data
-          $request->validate([
-              'account_number' => 'required|numeric|digits_between:10,12', // Adjust length for your region
-              'bank_name' => 'required|string',
-          ]);
-      
-          try {
-              // Step 1: Fetch bank codes from Paystack (Cache for efficiency)
-              $banks = Cache::remember('paystack_banks', now()->addHours(12), function () {
-                  $response = Http::withToken(config('services.paystack.secret_key'))
-                      ->get('https://api.paystack.co/bank');
-      
-                  return $response->successful() ? $response->json()['data'] : [];
-              });
-      
-              $bank = collect($banks)->firstWhere('name', $request->bank_name);
-      
-              if (!$bank) {
-                  return response()->json(['error' => 'Invalid bank name provided'], 400);
-              }
-      
-              $bankCode = $bank['code'];
-      
-              // Step 2: Resolve account number with Paystack
-              $resolveResponse = Http::withToken(config('services.paystack.secret_key'))
-                  ->get('https://api.paystack.co/bank/resolve', [
-                      'account_number' => $request->account_number,
-                      'bank_code' => $bankCode,
-                  ]);
-      
-              if (!$resolveResponse->successful()) {
-                  return response()->json([
-                      'error' => 'Failed to resolve account number',
-                      'details' => $resolveResponse->json(),
-                  ], 400);
-              }
-      
-              $resolvedData = $resolveResponse->json();
-              if (!isset($resolvedData['data']['account_name'])) {
-                  return response()->json(['error' => 'Invalid account details returned'], 400);
-              }
-      
-              $accountName = $resolvedData['data']['account_name'];
+     public function updateBankDetails(Request $request)
+{
+    // ✅ Authenticate user via JWT
+    $user = JWTAuth::parseToken()->authenticate();
 
-              \Log::info('Updating bank details:', [
+    // ✅ Validate request
+    $request->validate([
+        'account_number' => 'required|numeric|digits_between:10,12',
+        'bank_name' => 'required|string',
+    ]);
+
+    try {
+        // ✅ Step 1: Fetch Paystack banks (cached for 12 hours)
+        $banks = Cache::remember('paystack_banks', now()->addHours(12), function () {
+            $response = Http::withToken(config('services.paystack.secret_key'))
+                ->get('https://api.paystack.co/bank');
+
+            if (!$response->successful()) {
+                throw new \Exception('Unable to fetch bank list from Paystack.');
+            }
+
+            return $response->json()['data'];
+        });
+
+        // ✅ Step 2: Validate bank name and retrieve bank code
+        $bank = collect($banks)->firstWhere('name', $request->bank_name);
+        if (!$bank) {
+            return response()->json(['error' => 'Invalid bank name provided.'], 400);
+        }
+        $bankCode = $bank['code'];
+
+        // ✅ Step 3: Verify account number via Paystack
+        $resolveResponse = Http::withToken(config('services.paystack.secret_key'))
+            ->get('https://api.paystack.co/bank/resolve', [
                 'account_number' => $request->account_number,
                 'bank_code' => $bankCode,
-                'bank_name' => $request->bank_name,
-                'account_name' => $accountName,
             ]);
-      
-              // Step 3: Update the user's bank details
-              $user->update([
-                  'account_number' => $request->account_number,
-                  'bank_code' => $bankCode,
-                  'bank_name' => $request->bank_name,
-                  'account_name' => $accountName,
-              ]);
-      
-              return response()->json(['message' => 'Bank details updated successfully'], 200);
-          } catch (\Exception $e) {
-              return response()->json([
-                  'error' => 'An error occurred while updating bank details',
-                  'message' => $e->getMessage(),
-              ], 500);
-          }
+
+        if (!$resolveResponse->successful()) {
+            return response()->json([
+                'error' => 'Failed to verify account number. Please try again.',
+            ], 400);
         }
+
+        $resolvedData = $resolveResponse->json();
+        if (empty($resolvedData['data']['account_name'])) {
+            return response()->json(['error' => 'Invalid account details returned from Paystack.'], 400);
+        }
+
+        $accountName = $resolvedData['data']['account_name'];
+
+        // ✅ Step 4: Update user record
+        $user->update([
+            'account_number' => $request->account_number,
+            'bank_code' => $bankCode,
+            'bank_name' => $request->bank_name,
+            'account_name' => $accountName,
+        ]);
+
+        // ✅ Log for debugging (optional)
+        \Log::info('✅ Bank details updated successfully', [
+            'user_id' => $user->id,
+            'bank_name' => $request->bank_name,
+            'account_number' => $request->account_number,
+            'account_name' => $accountName,
+        ]);
+
+        // ✅ Return success message
+        return response()->json([
+            'message' => 'Bank details updated successfully.',
+            'data' => [
+                'bank_name' => $request->bank_name,
+                'account_number' => $request->account_number,
+                'account_name' => $accountName,
+            ],
+        ], 200);
+
+    } catch (\Exception $e) {
+        \Log::error('❌ Bank update error:', [
+            'user_id' => $user->id ?? null,
+            'error' => $e->getMessage(),
+        ]);
+
+        return response()->json([
+            'error' => 'An unexpected error occurred while updating bank details.',
+            'details' => config('app.debug') ? $e->getMessage() : null,
+        ], 500);
+    }
+}
+
+    public function getBanks()
+    {
+        $banks = Cache::remember('paystack_banks', now()->addHours(12), function () {
+            $response = Http::withToken(config('services.paystack.secret_key'))
+                ->get('https://api.paystack.co/bank');
+
+            return $response->successful() ? $response->json()['data'] : [];
+        });
+
+        return response()->json(['data' => $banks]);
+    }
+
 
     public function getUserStats()
     {

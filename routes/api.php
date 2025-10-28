@@ -83,6 +83,7 @@ Route::middleware('jwt.auth')->group(function () {
 
          // Bank details
         Route::put('/user/bank-details', [UserController::class, 'updateBankDetails']);
+        Route::get('/paystack/banks', [UserController::class, 'getBanks']);
 
         //User notifications
             Route::get('/notifications', [NotificationController::class, 'getNotifications']);
