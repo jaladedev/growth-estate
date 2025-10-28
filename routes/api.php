@@ -46,8 +46,8 @@ Route::middleware('jwt.auth')->group(function () {
             Route::get('/', [LandController::class, 'index']); // Get all lands
             Route::get('/{id}', [LandController::class, 'show']); // Get a specific land by ID
             Route::post('/', [LandController::class, 'store']); // Create a new land
-            Route::post('/{id}/purchase', [PurchaseController::class, 'purchase']); // Purchase units of land
-            Route::post('/{id}/sell', [PurchaseController::class, 'sellUnits']); // Sell units of land
+            Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])->middleware('check.pin'); // Purchase units of land
+            Route::post('/{id}/sell', [PurchaseController::class, 'sellUnits'])->middleware('check.pin'); // Sell units of land
             Route::get('/{id}/units', [UserController::class, 'getUserUnitsForLand']); // Get units owned by the user for a specific land
         });
 
@@ -65,22 +65,21 @@ Route::middleware('jwt.auth')->group(function () {
         // });
         
         // Transaction PIN
+        Route::post('/pin/forgot', [UserController::class, 'sendPinResetCode']);
+        Route::post('/pin/verify-code', [UserController::class, 'verifyPinResetCode']);
+        Route::post('/pin/reset', [UserController::class, 'resetTransactionPin']);
         Route::post('/pin/set', [UserController::class, 'setTransactionPin']);
         Route::post('/pin/update', [UserController::class, 'updateTransactionPin']);
        
         // Deposits & Withdrawals
         Route::post('/deposit', [DepositController::class, 'initiateDeposit']);
-        Route::post('/withdraw', [WithdrawalController::class, 'initiateWithdrawal']);
-        Route::post('/withdrawal/request', [WithdrawalController::class, 'requestWithdrawal']);
+        Route::post('/withdraw', [WithdrawalController::class, 'initiateWithdrawal'])->middleware('check.pin');
+        // Route::post('/withdrawal/request', [WithdrawalController::class, 'requestWithdrawal']);
         Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
         Route::get('/withdrawal/retry', [WithdrawalController::class, 'retryPendingWithdrawals']);
 
          // Bank details
         Route::put('/user/bank-details', [UserController::class, 'updateBankDetails']);
-
-        // Withdrawals
-        Route::post('/withdrawal/request', [WithdrawalController::class, 'requestWithdrawal']);
-        Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
 
         //User notifications
             Route::get('/notifications', [NotificationController::class, 'getNotifications']);

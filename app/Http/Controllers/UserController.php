@@ -12,6 +12,10 @@ use Illuminate\Support\Facades\Cache;
 use App\Models\Deposit;
 use App\Models\Withdrawal;
 use App\Models\Transaction;
+use App\Mail\TransactionPinResetMail;
+use App\Models\User;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Hash;
 
 class UserController extends Controller
 {
@@ -66,7 +70,114 @@ class UserController extends Controller
 
         return response()->json(['owned_lands' => $ownedLands]);
     }
+    
+    public function setTransactionPin(Request $request)
+    {
+        $user = JWTAuth::parseToken()->authenticate();
 
+        $request->validate([
+            'pin' => 'required|digits:4', // 4-digit PIN
+        ]);
+
+        if ($user->transaction_pin) {
+            return response()->json(['error' => 'Transaction PIN is already set'], 400);
+        }
+
+        // Hash the PIN before storing
+        $user->transaction_pin = bcrypt($request->pin);
+        $user->save();
+
+        return response()->json(['message' => 'Transaction PIN set successfully']);
+    }
+
+    public function updateTransactionPin(Request $request)
+    {
+        $user = JWTAuth::parseToken()->authenticate();
+
+        $request->validate([
+            'old_pin' => 'required|digits:4',
+            'new_pin' => 'required|digits:4',
+        ]);
+
+        // Check old PIN
+        if (!password_verify($request->old_pin, $user->transaction_pin)) {
+            return response()->json(['error' => 'Old PIN is incorrect'], 400);
+        }
+
+        // Update with new PIN
+        $user->transaction_pin = bcrypt($request->new_pin);
+        $user->save();
+
+        return response()->json(['message' => 'Transaction PIN updated successfully']);
+    }
+
+    public function sendPinResetCode(Request $request)
+    {
+        $request->validate(['email' => 'required|email']);
+
+        $user = User::where('email', $request->email)->first();
+
+        if (!$user) {
+            return response()->json(['error' => 'User not found'], 404);
+        }
+
+        $code = rand(100000, 999999);
+
+        $user->pin_reset_code = $code;
+        $user->pin_reset_expires_at = now()->addMinutes(10);
+        $user->save();
+
+        // send email
+        Mail::to($user->email)->send(new TransactionPinResetMail($user, $code));
+
+        return response()->json(['message' => 'PIN reset code sent to your email.']);
+    }
+
+    public function verifyPinResetCode(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'code' => 'required|numeric'
+        ]);
+
+        $user = User::where('email', $request->email)->first();
+
+        if (
+            !$user ||
+            $user->pin_reset_code != $request->code ||
+            now()->greaterThan($user->pin_reset_expires_at)
+        ) {
+            return response()->json(['error' => 'Invalid or expired code'], 400);
+        }
+
+        return response()->json(['message' => 'Code verified successfully.']);
+    }
+
+    public function resetTransactionPin(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'code' => 'required|numeric',
+            'new_pin' => 'required|digits:4'
+        ]);
+
+        $user = User::where('email', $request->email)->first();
+
+        if (
+            !$user ||
+            $user->pin_reset_code != $request->code ||
+            now()->greaterThan($user->pin_reset_expires_at)
+        ) {
+            return response()->json(['error' => 'Invalid or expired code'], 400);
+        }
+
+        $user->transaction_pin = Hash::make($request->new_pin);
+        $user->pin_reset_code = null;
+        $user->pin_reset_expires_at = null;
+        $user->save();
+
+        return response()->json(['message' => 'Transaction PIN reset successfully.']);
+    }
       // Update user's bank details using Paystack API
       public function updateBankDetails(Request $request)
       {
@@ -138,55 +249,55 @@ class UserController extends Controller
                   'message' => $e->getMessage(),
               ], 500);
           }
-}
-
-    public function getUserStats()
-{
-    try {
-        $user = JWTAuth::parseToken()->authenticate();
-
-        if (!$user) {
-            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
-        Log::info('User found', ['id' => $user->id]);
+    public function getUserStats()
+    {
+        try {
+            $user = JWTAuth::parseToken()->authenticate();
 
-        $landsOwned = $user->purchases()->distinct('land_id')->count('land_id');
-        $unitsOwned = $user->purchases()->sum('units');
-        $totalInvested = $user->purchases()->sum('total_amount_paid');
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            }
 
-        // If user->withdrawals() is not defined, this line will crash:
-        $totalWithdrawn = method_exists($user, 'withdrawals')
-            ? $user->withdrawals()->where('status', 'completed')->sum('amount')
-            : 0;
+            Log::info('User found', ['id' => $user->id]);
 
-        $pendingWithdrawals = method_exists($user, 'withdrawals')
-            ? $user->withdrawals()->where('status', 'pending')->count()
-            : 0;
+            $landsOwned = $user->purchases()->distinct('land_id')->count('land_id');
+            $unitsOwned = $user->purchases()->sum('units');
+            $totalInvested = $user->purchases()->sum('total_amount_paid');
 
-        $balance = $user->balance ?? 0;
+            // If user->withdrawals() is not defined, this line will crash:
+            $totalWithdrawn = method_exists($user, 'withdrawals')
+                ? $user->withdrawals()->where('status', 'completed')->sum('amount')
+                : 0;
 
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'lands_owned' => $landsOwned,
-                'units_owned' => $unitsOwned,
-                'total_invested' => $totalInvested,
-                'total_withdrawn' => $totalWithdrawn,
-                'pending_withdrawals' => $pendingWithdrawals,
-                'balance' => $balance,
-            ],
-        ]);
-    } catch (\Exception $e) {
-        Log::error('getUserStats error', ['message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            $pendingWithdrawals = method_exists($user, 'withdrawals')
+                ? $user->withdrawals()->where('status', 'pending')->count()
+                : 0;
 
-        return response()->json([
-            'success' => false,
-            'message' => 'Error fetching stats',
-            'error' => $e->getMessage(),
-        ], 500);
+            $balance = $user->balance ?? 0;
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'lands_owned' => $landsOwned,
+                    'units_owned' => $unitsOwned,
+                    'total_invested' => $totalInvested,
+                    'total_withdrawn' => $totalWithdrawn,
+                    'pending_withdrawals' => $pendingWithdrawals,
+                    'balance' => $balance,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('getUserStats error', ['message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching stats',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
-}
 
    public function getUserTransactions()
     {
