@@ -53,6 +53,7 @@ class AuthController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'email_verified_at' => $user->email_verified_at,
+                'transaction_pin' => $user->transaction_pin,
                 'is_admin' => $user->is_admin,
                 'created_at' => $user->created_at,
                 'updated_at' => $user->updated_at,

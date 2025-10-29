@@ -145,8 +145,8 @@ class PurchaseController extends Controller
                 $transaction = Transaction::create([
                     'land_id'   => $land->id,
                     'user_id'   => $user->id,
-                    'units'     => -$request->units, // negative for sold units
-                    'amount'     => -$totalAmountReceived,
+                    'units'     => $request->units, // negative for sold units
+                    'amount'     => $totalAmountReceived,
                     'status'    => 'completed',
                     'reference' => $referenceCode,
                     'message'   => 'Units have been sold successfully ',

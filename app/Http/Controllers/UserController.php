@@ -65,6 +65,8 @@ class UserController extends Controller
                 'land_id' => $purchase->land->id,
                 'land_name' => $purchase->land->title,
                 'units_owned' => $purchase->units,
+                'price_per_unit' => $purchase->land->price_per_unit,
+                'current_value' => $purchase->units * $purchase->land->price_per_unit           ,
             ];
         });
 
@@ -331,7 +333,7 @@ class UserController extends Controller
 
             Log::info('User found', ['id' => $user->id]);
 
-            $landsOwned = $user->purchases()->distinct('land_id')->count('land_id');
+            $landsOwned = $user->purchases()->where('units', '>', 0)->distinct('land_id')->count('land_id');
             $unitsOwned = $user->purchases()->sum('units');
             $totalInvested = $user->purchases()->sum('total_amount_paid');
 

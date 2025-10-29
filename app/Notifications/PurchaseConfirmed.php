@@ -31,7 +31,7 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
         return [
             'purchase_id' => $this->purchase->id,
             'units' => $this->purchase->units,
-            'total_amount_paid' => $this->purchase->total_amount_paid,
+            'total_amount_paid' => $this->purchase->amount,
             'message' => 'Your purchase has been confirmed!',
             'created_at' => now(),
         ];

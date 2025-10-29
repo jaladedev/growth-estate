@@ -4,17 +4,29 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use Tymon\JWTAuth\Facades\JWTAuth;
+use Illuminate\Support\Facades\Hash;
 
 class CheckTransactionPin
 {
     public function handle(Request $request, Closure $next)
     {
-        $user = JWTAuth::parseToken()->authenticate();
-        $pin = $request->input('transaction_pin');
+        $user = auth()->user();
 
-        if (!$pin || !password_verify($pin, $user->transaction_pin)) {
-            return response()->json(['error' => 'Invalid transaction PIN'], 403);
+        if (!$user || !$user->transaction_pin) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Transaction PIN not set. Please create a PIN first.',
+            ], 403);
+        }
+
+        $pin = $request->input('transaction_pin');
+        \Log::info('Transaction PIN received: ', ['transaction_pin' => $pin]);
+
+        if (!$pin || !Hash::check($pin, $user->transaction_pin)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid transaction PIN.',
+            ], 401);
         }
 
         return $next($request);

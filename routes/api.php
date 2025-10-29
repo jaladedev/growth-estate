@@ -10,6 +10,8 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\WithdrawalController;
 use App\Http\Controllers\NotificationController;
 
+use App\Http\Middleware\CheckTransactionPin;
+
 // Public routes
 Route::post('/register', [AuthController::class, 'register']); // User registration
 Route::post('/login', [AuthController::class, 'login']); // Login route (JWT)
@@ -49,8 +51,12 @@ Route::middleware('jwt.auth')->group(function () {
             Route::get('/', [LandController::class, 'index']); // Get all lands
             Route::get('/{id}', [LandController::class, 'show']); // Get a specific land by ID
             Route::post('/', [LandController::class, 'store']); // Create a new land
-            Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])->middleware('check.pin'); // Purchase units of land
-            Route::post('/{id}/sell', [PurchaseController::class, 'sellUnits'])->middleware('check.pin'); // Sell units of land
+            // Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])->middleware('check.pin'); // Purchase units of land
+            
+            Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])
+            ->middleware([CheckTransactionPin::class]);
+            // Route::post('/{id}/sell', [PurchaseController::class, 'sellUnits'])->middleware('check.pin'); // Sell units of land
+            Route::post('/{id}/sell', [PurchaseController::class, 'sellUnits'])->middleware([CheckTransactionPin::class]);
             Route::get('/{id}/units', [UserController::class, 'getUserUnitsForLand']); // Get units owned by the user for a specific land
         });
 

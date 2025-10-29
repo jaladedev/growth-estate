@@ -21,7 +21,7 @@ class Kernel extends HttpKernel
         \Illuminate\Foundation\Http\Middleware\ValidatePostSize::class,
         \App\Http\Middleware\TrimStrings::class,
         \Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull::class,
-        'check.pin' => \App\Http\Middleware\CheckTransactionPin::class,
+       
     ];
 
     /**
@@ -57,6 +57,7 @@ class Kernel extends HttpKernel
         // Custom JWT middleware for authentication
         'jwt.auth' => \App\Http\Middleware\JwtMiddleware::class, // Custom JWT Authentication middleware
         'jwt.refresh' => \Tymon\JWTAuth\Http\Middleware\RefreshToken::class,
+        'check.pin' => \App\Http\Middleware\CheckTransactionPin::class,
 
         'auth' => \App\Http\Middleware\Authenticate::class, // Keep this if you still need it for other purposes
         'auth.basic' => \Illuminate\Auth\Middleware\AuthenticateWithBasicAuth::class,
