@@ -34,21 +34,48 @@ class AuthController extends Controller
     }
 
     public function me()
-    {
-        try {
-            $user = auth()->user();
-            return response()->json([
-                'success' => true,
-                'user' => $user
-            ]);
-        } catch (\Exception $e) {
+{
+    try {
+        $user = auth()->user();
+
+        if (!$user) {
             return response()->json([
                 'success' => false,
-                'message' => 'Could not fetch user',
-                'error' => $e->getMessage()
-            ], 500);
+                'message' => 'Unauthorized',
+            ], 401);
         }
+
+        return response()->json([
+            'success' => true,
+            'user' => [
+                'id' => $user->id,
+                'uid' => $user->uid,
+                'name' => $user->name,
+                'email' => $user->email,
+                'email_verified_at' => $user->email_verified_at,
+                'is_admin' => $user->is_admin,
+                'created_at' => $user->created_at,
+                'updated_at' => $user->updated_at,
+                'balance' => $user->balance,
+                'bank_name' => $user->bank_name,
+                'bank_code' => $user->bank_code,
+                'account_number' => $user->account_number,
+                'account_name' => $user->account_name,
+            ],
+        ]);
+    } catch (\Exception $e) {
+        \Log::error('❌ Error fetching user profile', [
+            'error' => $e->getMessage(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Could not fetch user',
+            'error' => config('app.debug') ? $e->getMessage() : null,
+        ], 500);
     }
+}
+
     // Register a new user
     public function register(Request $request)
     {
