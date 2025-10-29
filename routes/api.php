@@ -55,7 +55,6 @@ Route::middleware('jwt.auth')->group(function () {
             
             Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])
             ->middleware([CheckTransactionPin::class]);
-            // Route::post('/{id}/sell', [PurchaseController::class, 'sellUnits'])->middleware('check.pin'); // Sell units of land
             Route::post('/{id}/sell', [PurchaseController::class, 'sellUnits'])->middleware([CheckTransactionPin::class]);
             Route::get('/{id}/units', [UserController::class, 'getUserUnitsForLand']); // Get units owned by the user for a specific land
         });
@@ -64,15 +63,7 @@ Route::middleware('jwt.auth')->group(function () {
         Route::get('/user/lands', [UserController::class, 'getAllUserLands']);
         Route::get('/user/stats', [UserController::class, 'getUserStats']);
         Route::get('/transactions/user', [UserController::class, 'getUserTransactions']);
-
-
-        // // Transaction management routes
-        // Route::prefix('transactions')->group(function () {   
-        //     Route::get('/', [TransactionController::class, 'index']); // Get all transactions
-        //     Route::get('/users/{user_id}', [TransactionController::class, 'getByUser']); // Get transactions by user ID
-        //     Route::get('/lands/{land_id}', [TransactionController::class, 'getByLand']); // Get transactions by land ID
-        // });
-        
+      
         // Transaction PIN
         Route::post('/pin/forgot', [UserController::class, 'sendPinResetCode']);
         Route::post('/pin/verify-code', [UserController::class, 'verifyPinResetCode']);
@@ -82,8 +73,7 @@ Route::middleware('jwt.auth')->group(function () {
        
         // Deposits & Withdrawals
         Route::post('/deposit', [DepositController::class, 'initiateDeposit']);
-        Route::post('/withdraw', [WithdrawalController::class, 'initiateWithdrawal'])->middleware('check.pin');
-        // Route::post('/withdrawal/request', [WithdrawalController::class, 'requestWithdrawal']);
+        Route::post('/withdraw', [WithdrawalController::class, 'requestWithdrawal'])->middleware([CheckTransactionPin::class]);
         Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
         Route::get('/withdrawal/retry', [WithdrawalController::class, 'retryPendingWithdrawals']);
 

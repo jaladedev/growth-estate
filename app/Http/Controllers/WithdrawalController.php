@@ -21,7 +21,7 @@ class WithdrawalController extends Controller
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            'amount' => 'required|numeric|min:1',
+            'amount' => 'required|numeric|min:1000',
         ]);
 
         if ($user->balance < $request->amount) {

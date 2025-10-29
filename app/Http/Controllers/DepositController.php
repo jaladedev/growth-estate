@@ -80,7 +80,7 @@ class DepositController extends Controller
         }
     }
 
-    public function handleDepositCallback(Request $request)
+   public function handleDepositCallback(Request $request)
     {
         Log::info("Deposit callback accessed", ['method' => $request->method()]);
 
@@ -97,7 +97,7 @@ class DepositController extends Controller
 
         if (!$deposit) {
             Log::error("Deposit record not found", ['reference' => $reference]);
-            return response()->json(['error' => 'Deposit record not found'], 404);
+            return redirect(env('FRONTEND_URL') . '/wallet?status=failed');
         }
 
         $user = $deposit->user;
@@ -111,16 +111,17 @@ class DepositController extends Controller
                     $deposit->status = 'completed';
                     $deposit->save();
 
-                    $user->notify(new DepositConfirmed($amount));
+                    $user->notify(new \App\Notifications\DepositConfirmed($amount));
 
                     Log::info("Deposit successful", [
-                        'user_id' => $user->id, 
-                        'amount' => $amount, 
+                        'user_id' => $user->id,
+                        'amount' => $amount,
                         'deposit_reference' => $deposit->reference
                     ]);
                 });
 
-                return response()->json(['message' => 'Deposit successful', 'amount' => $amount]);
+                // ✅ Redirect user back to wallet page on frontend
+                return redirect(env('FRONTEND_URL') . '/wallet?status=success&amount=' . $amount);
 
             } catch (\Exception $e) {
                 Log::error("Database update failed for deposit", [
@@ -132,9 +133,9 @@ class DepositController extends Controller
                 $deposit->status = 'failed';
                 $deposit->save();
 
-                $user->notify(new DepositFailedNotification($deposit));
+                $user->notify(new \App\Notifications\DepositFailedNotification($deposit));
 
-                return response()->json(['error' => 'Failed to update deposit in the database'], 500);
+                return redirect(env('FRONTEND_URL') . '/wallet?status=failed');
             }
         } else {
             Log::error("Deposit verification failed", [
@@ -145,10 +146,11 @@ class DepositController extends Controller
             $deposit->status = 'failed';
             $deposit->save();
 
-            $user->notify(new DepositFailedNotification($deposit));
+            $user->notify(new \App\Notifications\DepositFailedNotification($deposit));
 
-            return response()->json(['error' => 'Deposit verification failed'], 400);
+            return redirect(env('FRONTEND_URL') . '/wallet?status=failed');
         }
     }
+
 }
         
