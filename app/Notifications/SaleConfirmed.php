@@ -31,7 +31,7 @@ class SaleConfirmed extends Notification implements ShouldQueue
         return [
             'purchase_id' => $this->purchase->id,
             'units' => $this->purchase->units,
-            'total_amount_paid' => $this->purchase->total_amount_paid,
+            'total_amount_received' => $this->purchase->amount,
             'message' => 'Your sale has been confirmed!',
             'created_at' => now(),
         ];
@@ -44,7 +44,7 @@ class SaleConfirmed extends Notification implements ShouldQueue
                     ->subject('Sale Confirmation')
                     ->line('Your sale of ' . $this->purchase->units . ' units has been confirmed!')
                     ->action('View Sale', url('/purchases/' . $this->purchase->id))
-                    ->line('Thank you for your purchase!');
+                    ->line('Thank you for your transacting with us!');
     }
 
     public function toArray($notifiable)

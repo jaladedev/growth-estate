@@ -402,21 +402,20 @@ class UserController extends Controller
                 ]);
 
             // Fetch land transactions (purchases & sales)
-            $landTransactions = Transaction::where('user_id', $user->id)
-                ->select('id', 'land_id', 'units', 'amount', 'status', 'created_at')
-                ->with('land:id,title')
-                ->get()
-                ->map(function ($t) {
-                    $isPurchase = $t->units > 0;
-                    return [
-                        'type' => $isPurchase ? 'Purchase' : 'Sale',
-                        'land' => $t->land->title ?? 'Unknown Land',
-                        'amount' => abs($t->amount), 
-                        'units' => abs($t->units),
-                        'status' => ucfirst($t->status),
-                        'date' => $t->created_at->toIso8601String(),
-                    ];
-                });
+       $landTransactions = Transaction::where('user_id', $user->id)
+        ->select('id', 'land_id','type', 'units', 'amount', 'status', 'created_at')
+        ->with('land:id,title')
+        ->get()
+        ->map(function ($t) {
+            return [
+                'type' => ucfirst($t->type),    
+                'land' => $t->land->title ?? 'Unknown Land',
+                'amount' => abs($t->amount), 
+                'units' => abs($t->units),
+                'status' => ucfirst($t->status),
+                'date' => $t->created_at->toIso8601String(),
+            ];
+        });
 
             // Combine all
             $transactions = collect()
