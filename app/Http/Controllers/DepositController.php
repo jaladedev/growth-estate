@@ -80,7 +80,7 @@ class DepositController extends Controller
         }
     }
 
-   public function handleDepositCallback(Request $request)
+ public function handleDepositCallback(Request $request)
     {
         Log::info("Deposit callback accessed", ['method' => $request->method()]);
 
@@ -91,7 +91,10 @@ class DepositController extends Controller
             'Authorization' => 'Bearer ' . env('PAYSTACK_SECRET_KEY'),
         ])->get($paystackUrl);
 
-        Log::info("Paystack response for deposit verification", ['response' => $response->json(), 'reference' => $reference]);
+        Log::info("Paystack response for deposit verification", [
+            'response' => $response->json(),
+            'reference' => $reference
+        ]);
 
         $deposit = Deposit::where('reference', $reference)->first();
 
@@ -111,8 +114,6 @@ class DepositController extends Controller
                     $deposit->status = 'completed';
                     $deposit->save();
 
-                    $user->notify(new \App\Notifications\DepositConfirmed($amount));
-
                     Log::info("Deposit successful", [
                         'user_id' => $user->id,
                         'amount' => $amount,
@@ -120,7 +121,16 @@ class DepositController extends Controller
                     ]);
                 });
 
-                // ✅ Redirect user back to wallet page on frontend
+                // ✅ Safe email notification (won’t break deposit if it fails)
+                try {
+                    $user->notify(new DepositConfirmed($amount));
+                } catch (\Exception $mailError) {
+                    Log::warning("Deposit completed but email failed", [
+                        'user_id' => $user->id,
+                        'error' => $mailError->getMessage()
+                    ]);
+                }
+
                 return redirect(env('FRONTEND_URL') . '/wallet?status=success&amount=' . $amount);
 
             } catch (\Exception $e) {
@@ -133,7 +143,15 @@ class DepositController extends Controller
                 $deposit->status = 'failed';
                 $deposit->save();
 
-                $user->notify(new \App\Notifications\DepositFailedNotification($deposit));
+                // ✅ Notification in try-catch
+                try {
+                    $user->notify(new DepositFailedNotification($deposit));
+                } catch (\Exception $mailError) {
+                    Log::warning("Deposit failed and email could not be sent", [
+                        'user_id' => $user->id,
+                        'error' => $mailError->getMessage()
+                    ]);
+                }
 
                 return redirect(env('FRONTEND_URL') . '/wallet?status=failed');
             }
@@ -146,7 +164,14 @@ class DepositController extends Controller
             $deposit->status = 'failed';
             $deposit->save();
 
-            $user->notify(new \App\Notifications\DepositFailedNotification($deposit));
+            try {
+                $user->notify(new DepositFailedNotification($deposit));
+            } catch (\Exception $mailError) {
+                Log::warning("Failed to send deposit failure email", [
+                    'user_id' => $user->id,
+                    'error' => $mailError->getMessage()
+                ]);
+            }
 
             return redirect(env('FRONTEND_URL') . '/wallet?status=failed');
         }

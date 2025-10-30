@@ -48,7 +48,7 @@ class CheckTransactionPin
             return response()->json([
                 'success' => false,
                 'message' => 'Invalid transaction PIN.',
-            ], 401);
+            ], 403);
         }
 
         // Clear attempts on success
