@@ -10,6 +10,14 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\VerificationController;
 use App\Http\Controllers\WithdrawalController;
 
+Route::get('/', function () {
+    return response()->json([
+        'status' => 'success',
+        'message' => '🚀 Growth Estate API is live!',
+        'api_base' => url('/api')
+    ]);
+});
+
 // Public routes
 Route::post('/register', [AuthController::class, 'register']); // User registration
 Route::post('login', [AuthController::class, 'login']);
