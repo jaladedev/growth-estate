@@ -3,7 +3,6 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\LandController;
-//use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\PurchaseController;
 use App\Http\Controllers\DepositController;
 use App\Http\Controllers\UserController;
@@ -12,83 +11,125 @@ use App\Http\Controllers\NotificationController;
 
 use App\Http\Middleware\CheckTransactionPin;
 
-// Public routes
-Route::post('/register', [AuthController::class, 'register']); // User registration
-Route::post('/login', [AuthController::class, 'login']); // Login route (JWT)
+/*
+|--------------------------------------------------------------------------
+| Public Routes
+|--------------------------------------------------------------------------
+*/
 
-// Email verification routes
+// Registration & Login
+Route::post('/register', [AuthController::class, 'register']);
+Route::post('/login', [AuthController::class, 'login']);
+
+// Email verification
 Route::post('/email/verify/code', [AuthController::class, 'verifyEmailCode']);
 Route::post('/email/resend-verification', [AuthController::class, 'resendVerificationEmail']);
 
-// Password reset routes using code
+// Password reset (via code)
 Route::prefix('password')->group(function () {
-    Route::post('/reset/code', [AuthController::class, 'sendPasswordResetCode']); // Send reset code to email
-    Route::post('/reset/verify', [AuthController::class, 'verifyResetCode']); // Verify reset code
-    Route::post('/reset', [AuthController::class, 'resetPassword']); // Reset password with code
+    Route::post('/reset/code', [AuthController::class, 'sendPasswordResetCode']);
+    Route::post('/reset/verify', [AuthController::class, 'verifyResetCode']);
+    Route::post('/reset', [AuthController::class, 'resetPassword']);
 });
 
- Route::get('/land', [LandController::class, 'index']); 
-// Deposit callback route (signed to prevent unauthorized access)
-Route::get('/deposit/callback', [DepositController::class, 'handleDepositCallback'])->name('deposit.callback');
+// Public lands listing
+Route::get('/land', [LandController::class, 'index']);
 
-// Protected routes - requires user authentication via JWT
+// Deposit callback (signed)
+Route::get('/deposit/callback', [DepositController::class, 'handleDepositCallback'])
+    ->name('deposit.callback');
+
+// Paystack withdrawal webhook (Public)
+Route::post('/paystack/webhook', [WithdrawalController::class, 'handlePaystackCallback']);
+
+
+/*
+|--------------------------------------------------------------------------
+| Protected Routes (JWT Required)
+|--------------------------------------------------------------------------
+*/
 Route::middleware('jwt.auth')->group(function () {
-       // Get authenticated user details
-    Route::get('/me', [AuthController::class, 'me']); // Returns current logged-in user
+
+    // Logged-in user endpoints
+    Route::get('/me', [AuthController::class, 'me']);
     Route::post('/refresh', [AuthController::class, 'refresh']);
 
-
-    // Email verified routes (only accessible if email is verified)
+    /*
+    |--------------------------------------------------------------------------
+    | Email-Verified User Routes
+    |--------------------------------------------------------------------------
+    */
     Route::middleware('verified')->group(function () {
 
-          Route::post('/user/change-password', [AuthController::class, 'changePassword']); // Change password route
+        // Change password
+        Route::post('/user/change-password', [AuthController::class, 'changePassword']);
 
-        // Logout route
-        Route::post('/logout', [AuthController::class, 'logout']); // User logout
+        // Logout
+        Route::post('/logout', [AuthController::class, 'logout']);
 
-        // Land management routes
+        /*
+        |--------------------------------------------------------------------------
+        | Land Management
+        |--------------------------------------------------------------------------
+        */
         Route::prefix('lands')->group(function () {
-            Route::get('/', [LandController::class, 'index']); // Get all lands
-            Route::get('/{id}', [LandController::class, 'show']); // Get a specific land by ID
-            Route::post('/', [LandController::class, 'store']); // Create a new land
-            // Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])->middleware('check.pin'); // Purchase units of land
-            
+            Route::get('/', [LandController::class, 'index']);
+            Route::get('/{id}', [LandController::class, 'show']);
+            Route::post('/', [LandController::class, 'store']);
+
             Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])
-            ->middleware([CheckTransactionPin::class]);
-            Route::post('/{id}/sell', [PurchaseController::class, 'sellUnits'])->middleware([CheckTransactionPin::class]);
-            Route::get('/{id}/units', [UserController::class, 'getUserUnitsForLand']); // Get units owned by the user for a specific land
+                ->middleware([CheckTransactionPin::class]);
+
+            Route::post('/{id}/sell', [PurchaseController::class, 'sellUnits'])
+                ->middleware([CheckTransactionPin::class]);
+
+            Route::get('/{id}/units', [UserController::class, 'getUserUnitsForLand']);
         });
 
-        // Route to get all lands and units owned by the user
+        // User land & stats
         Route::get('/user/lands', [UserController::class, 'getAllUserLands']);
         Route::get('/user/stats', [UserController::class, 'getUserStats']);
         Route::get('/transactions/user', [UserController::class, 'getUserTransactions']);
-      
-        // Transaction PIN
+
+        /*
+        |--------------------------------------------------------------------------
+        | Transaction PIN
+        |--------------------------------------------------------------------------
+        */
         Route::post('/pin/forgot', [UserController::class, 'sendPinResetCode']);
         Route::post('/pin/verify-code', [UserController::class, 'verifyPinResetCode']);
         Route::post('/pin/reset', [UserController::class, 'resetTransactionPin']);
         Route::post('/pin/set', [UserController::class, 'setTransactionPin']);
         Route::post('/pin/update', [UserController::class, 'updateTransactionPin']);
-       
-        // Deposits & Withdrawals
+
+        /*
+        |--------------------------------------------------------------------------
+        | Deposits & Withdrawals
+        |--------------------------------------------------------------------------
+        */
         Route::post('/deposit', [DepositController::class, 'initiateDeposit']);
-        Route::post('/withdraw', [WithdrawalController::class, 'requestWithdrawal'])->middleware([CheckTransactionPin::class]);
+        Route::post('/withdraw', [WithdrawalController::class, 'requestWithdrawal'])
+            ->middleware([CheckTransactionPin::class]);
+
         Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
         Route::get('/withdrawal/retry', [WithdrawalController::class, 'retryPendingWithdrawals']);
 
-         // Bank details
+        /*
+        |--------------------------------------------------------------------------
+        | Bank Details + Paystack Helpers
+        |--------------------------------------------------------------------------
+        */
         Route::put('/user/bank-details', [UserController::class, 'updateBankDetails']);
         Route::get('/paystack/banks', [UserController::class, 'getBanks']);
         Route::post('/paystack/resolve-account', [UserController::class, 'resolveAccount']);
 
-        //User notifications
-            Route::get('/notifications', [NotificationController::class, 'getNotifications']);
-            Route::get('/notifications/unread', [NotificationController::class, 'getUnreadNotifications']);
-            Route::post('/notifications/read', [NotificationController::class, 'markAllAsRead']);
-
-        });
-    
-// Paystack Webhook (Public - No Authentication)
-Route::post('/paystack/webhook', [WithdrawalController::class, 'handlePaystackCallback']);
+        /*
+        |--------------------------------------------------------------------------
+        | Notifications
+        |--------------------------------------------------------------------------
+        */
+        Route::get('/notifications', [NotificationController::class, 'getNotifications']);
+        Route::get('/notifications/unread', [NotificationController::class, 'getUnreadNotifications']);
+        Route::post('/notifications/read', [NotificationController::class, 'markAllAsRead']);
+    });
 });
