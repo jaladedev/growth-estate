@@ -44,7 +44,7 @@ class DepositController extends Controller
             'reference' => $reference
         ]);
 
-        $response = Http::withToken(config('services.paystack.secret'))
+        $response = Http::withToken(config('services.paystack.secret_key'))
             ->post('https://api.paystack.co/transaction/initialize', [
                 'email'        => $user->email,
                 'amount'       => $amountKobo,
@@ -92,7 +92,7 @@ class DepositController extends Controller
             return;
         }
 
-        $response = Http::withToken(config('services.paystack.secret'))
+        $response = Http::withToken(config('services.paystack.secret_key'))
             ->get("https://api.paystack.co/transaction/verify/{$reference}");
 
         if (! $response->successful() ||

@@ -17,7 +17,7 @@ class Deposit extends Model
     protected $fillable = [
         'user_id',
         'reference',
-        'amount',
+        'amount_kobo',
         'status',
     ];
 
