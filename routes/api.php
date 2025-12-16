@@ -8,6 +8,7 @@ use App\Http\Controllers\DepositController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\WithdrawalController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\PaystackWebhookController; 
 
 use App\Http\Middleware\CheckTransactionPin;
 
@@ -40,7 +41,7 @@ Route::get('/deposit/callback', [DepositController::class, 'handleDepositCallbac
     ->name('deposit.callback');
 
 // Paystack withdrawal webhook (Public)
-Route::post('/paystack/webhook', [WithdrawalController::class, 'handlePaystackCallback']);
+Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle']);
 
 
 /*

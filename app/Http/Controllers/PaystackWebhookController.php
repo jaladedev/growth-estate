@@ -17,7 +17,7 @@ class PaystackWebhookController extends Controller
         $computed  = hash_hmac(
             'sha512',
             $request->getContent(),
-            config('services.paystack.secret')
+            config('services.paystack.secret_key')
         );
 
         if (! hash_equals($computed, $signature)) {

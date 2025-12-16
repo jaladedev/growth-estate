@@ -57,7 +57,7 @@ class AuthController extends Controller
                 'is_admin' => $user->is_admin,
                 'created_at' => $user->created_at,
                 'updated_at' => $user->updated_at,
-                'balance' => $user->balance,
+                'balance_kobo' => $user->balance_kobo,
                 'bank_name' => $user->bank_name,
                 'bank_code' => $user->bank_code,
                 'account_number' => $user->account_number,
