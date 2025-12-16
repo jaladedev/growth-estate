@@ -32,7 +32,7 @@ class DepositController extends Controller
 
         $reference = 'DEP-' . Str::uuid();
 
-        // Create deposit record first (source of truth)
+        // Create deposit record 
         $deposit = Deposit::create([
             'user_id'     => $user->id,
             'reference'   => $reference,
@@ -69,9 +69,6 @@ class DepositController extends Controller
         ]);
     }
 
-    /**
-     * User redirect callback (NOT settlement)
-     */
     public function handleDepositCallback(Request $request)
     {
         $reference = $request->query('reference');
@@ -81,9 +78,6 @@ class DepositController extends Controller
         );
     }
 
-    /**
-     * FINAL settlement (can be used by webhook or manual verify)
-     */
     public function verifyDeposit(string $reference): void
     {
         $deposit = Deposit::where('reference', $reference)->first();
@@ -146,7 +140,6 @@ class DepositController extends Controller
             $lockedDeposit->save();
         });
 
-        // Notify safely
         try {
             $deposit->user->notify(
                 new DepositConfirmed($paidAmount / 100)
