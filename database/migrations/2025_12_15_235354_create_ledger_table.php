@@ -19,7 +19,8 @@ return new class extends Migration
             'deposit',
             'withdrawal',
             'reversal',
-            'adjustment'
+            'adjustment',
+            'transaction_fee',
         ]);
 
         $table->bigInteger('amount_kobo');

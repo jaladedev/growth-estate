@@ -18,7 +18,15 @@ class Deposit extends Model
         'user_id',
         'reference',
         'amount_kobo',
+        'transaction_fee',
+        'total_kobo',
         'status',
+    ];
+
+    protected $casts = [
+    'amount_kobo'     => 'integer',
+    'transaction_fee' => 'integer',
+    'total_kobo'      => 'integer',
     ];
 
     /**

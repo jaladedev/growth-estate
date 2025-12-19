@@ -15,7 +15,7 @@ class DepositController extends Controller
     /**
      * Initiate deposit
      */
-    public function initiateDeposit(Request $request)
+   public function initiateDeposit(Request $request)
     {
         $user = JWTAuth::parseToken()->authenticate();
 
@@ -23,14 +23,22 @@ class DepositController extends Controller
             'amount' => 'required|numeric|min:1',
         ]);
 
+        // Original amount in kobo
         $amountKobo = (int) ($request->amount * 100);
+
+        // Add 2% transaction fee
+        $transactionFee = (int) round($amountKobo * 0.02); // 2% of amount
+        $totalAmountKobo = $amountKobo + $transactionFee;
+
         $reference  = 'DEP-' . Str::uuid();
 
         Deposit::create([
-            'user_id'     => $user->id,
-            'reference'   => $reference,
-            'amount_kobo' => $amountKobo,
-            'status'      => 'pending',
+            'user_id'        => $user->id,
+            'reference'      => $reference,
+            'amount_kobo'    => $amountKobo,       
+            'total_kobo'     => $totalAmountKobo,  
+            'transaction_fee'=> $transactionFee,
+            'status'         => 'pending',
         ]);
 
         $callbackUrl = config('app.frontend_url') . "/wallet?reference={$reference}";
@@ -38,7 +46,7 @@ class DepositController extends Controller
         $response = Http::withToken(config('services.paystack.secret_key'))
             ->post('https://api.paystack.co/transaction/initialize', [
                 'email'        => $user->email,
-                'amount'       => $amountKobo,
+                'amount'       => $totalAmountKobo, 
                 'reference'    => $reference,
                 'callback_url' => $callbackUrl,
             ]);
@@ -57,8 +65,11 @@ class DepositController extends Controller
         return response()->json([
             'payment_url' => $response['data']['authorization_url'],
             'reference'   => $reference,
+            'transaction_fee' => $transactionFee / 100, 
+            'total_amount' => $totalAmountKobo / 100,
         ]);
     }
+
 
     /**
      * Frontend status check 

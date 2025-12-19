@@ -10,17 +10,11 @@ use Illuminate\Support\Facades\Log;
 
 class PaystackWebhookController extends Controller
 {
-    public function handle(Request $request)
+  public function handle(Request $request)
     {
-
+        // Verify signature
         $signature = $request->header('x-paystack-signature');
-
-        if (! $signature) {
-            Log::warning('Missing Paystack signature');
-            return response()->json(['status' => 'invalid'], 400);
-        }
-
-        $computed = hash_hmac(
+        $computed  = hash_hmac(
             'sha512',
             $request->getContent(),
             config('services.paystack.secret_key')
@@ -33,42 +27,41 @@ class PaystackWebhookController extends Controller
 
         $payload = $request->all();
 
-        if (
-            ($payload['event'] ?? null) !== 'charge.success' ||
-            ! isset($payload['data']['reference'], $payload['data']['amount'])
-        ) {
-            return response()->json(['status' => 'ignored'], 200);
+        if ($payload['event'] !== 'charge.success') {
+            return response()->json(['status' => 'ignored']);
         }
 
-        $reference  = $payload['data']['reference'];
-        $amountPaid = (int) $payload['data']['amount'];
+        $data      = $payload['data'];
+        $reference = $data['reference'];
+        $amountPaid = (int) $data['amount']; // total amount paid (including fee)
 
         $deposit = Deposit::where('reference', $reference)->first();
 
         if (! $deposit) {
             Log::warning('Webhook deposit not found', ['reference' => $reference]);
-            return response()->json(['status' => 'logged'], 200);
+            return response()->json(['status' => 'not_found']);
         }
 
         // Idempotency
         if ($deposit->status === 'completed') {
-            return response()->json(['status' => 'already_processed'], 200);
+            return response()->json(['status' => 'already_processed']);
         }
 
         // Amount integrity check
-        if ($deposit->amount_kobo !== $amountPaid) {
-            Log::critical('Webhook amount mismatch', [
+        if ($amountPaid !== $deposit->total_kobo) {
+            Log::critical('Webhook total amount mismatch', [
                 'reference' => $reference,
-                'expected'  => $deposit->amount_kobo,
+                'expected'  => $deposit->total_kobo,
                 'paid'      => $amountPaid,
             ]);
 
             $deposit->update(['status' => 'failed']);
-            return response()->json(['status' => 'logged'], 200);
+            return response()->json(['status' => 'amount_mismatch'], 400);
         }
 
-        DB::transaction(function () use ($deposit, $amountPaid) {
+        DB::transaction(function () use ($deposit) {
 
+            // Lock deposit row
             $lockedDeposit = Deposit::where('id', $deposit->id)
                 ->lockForUpdate()
                 ->first();
@@ -77,28 +70,41 @@ class PaystackWebhookController extends Controller
                 return;
             }
 
+            // Lock user row
             $user = User::where('id', $lockedDeposit->user_id)
                 ->lockForUpdate()
                 ->first();
 
-            $user->balance_kobo += $amountPaid;
+            // Credit only the original deposit amount (excluding fee)
+            $user->balance_kobo += $lockedDeposit->amount_kobo;
             $user->save();
 
-            $lockedDeposit->update([
-                'status'       => 'completed',
-                'completed_at' => now(),
-            ]);
+            // Mark deposit as completed
+            $lockedDeposit->status = 'completed';
+            $lockedDeposit->updated_at = now();
+            $lockedDeposit->save();
 
+            // Ledger entry for the credited amount
             DB::table('ledger_entries')->insert([
                 'uid'       => $user->id,
                 'type'          => 'deposit',
-                'amount_kobo'   => $amountPaid,
-                'balance_after'=> $user->balance_kobo,
+                'amount_kobo'   => $lockedDeposit->amount_kobo,
+                'balance_after' => $user->balance_kobo,
+                'reference'     => $lockedDeposit->reference,
+                'created_at'    => now(),
+            ]);
+
+            // Ledger entry for transaction fee 
+            DB::table('ledger_entries')->insert([
+                'uid'       => $user->id,
+                'type'          => 'transaction_fee',
+                'amount_kobo'   => $lockedDeposit->transaction_fee,
+                'balance_after' => $user->balance_kobo,
                 'reference'     => $lockedDeposit->reference,
                 'created_at'    => now(),
             ]);
         });
 
-        return response()->json(['status' => 'processed'], 200);
+        return response()->json(['status' => 'processed']);
     }
 }
