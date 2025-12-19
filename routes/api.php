@@ -9,7 +9,6 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\WithdrawalController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PaystackWebhookController; 
-
 use App\Http\Middleware\CheckTransactionPin;
 
 /*
@@ -18,7 +17,7 @@ use App\Http\Middleware\CheckTransactionPin;
 |--------------------------------------------------------------------------
 */
 
-// Registration & Login
+// Auth
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 
@@ -26,51 +25,58 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::post('/email/verify/code', [AuthController::class, 'verifyEmailCode']);
 Route::post('/email/resend-verification', [AuthController::class, 'resendVerificationEmail']);
 
-// Password reset (via code)
+// Password reset
 Route::prefix('password')->group(function () {
     Route::post('/reset/code', [AuthController::class, 'sendPasswordResetCode']);
     Route::post('/reset/verify', [AuthController::class, 'verifyResetCode']);
     Route::post('/reset', [AuthController::class, 'resetPassword']);
 });
 
-// Public lands listing
+// Public lands
 Route::get('/land', [LandController::class, 'index']);
 
-// Deposit callback (signed)
-Route::get('/deposit/callback', [DepositController::class, 'handleDepositCallback'])
-    ->name('deposit.callback');
+/*
+|--------------------------------------------------------------------------
+| Paystack
+|--------------------------------------------------------------------------
+*/
 
-// Paystack withdrawal webhook (Public)
-Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle']);
+// Paystack deposit webhook (SOURCE OF TRUTH)
+Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle'])
+    ->withoutMiddleware(['auth:api', 'throttle']);
+
+// Paystack redirect (frontend only)
+// Route::get('/deposit/callback', [DepositController::class, 'handleDepositCallback']);
+
+// Frontend deposit status check
+Route::get('/deposit/verify/{reference}', [DepositController::class, 'verifyDeposit']);
 
 
 /*
 |--------------------------------------------------------------------------
-| Protected Routes (JWT Required)
+| Protected Routes (JWT)
 |--------------------------------------------------------------------------
 */
 Route::middleware('jwt.auth')->group(function () {
 
-    // Logged-in user endpoints
+    // Session
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/refresh', [AuthController::class, 'refresh']);
 
     /*
     |--------------------------------------------------------------------------
-    | Email-Verified User Routes
+    | Verified Users
     |--------------------------------------------------------------------------
     */
     Route::middleware('verified')->group(function () {
 
-        // Change password
-        Route::post('/user/change-password', [AuthController::class, 'changePassword']);
-
-        // Logout
+        // Auth
         Route::post('/logout', [AuthController::class, 'logout']);
+        Route::post('/user/change-password', [AuthController::class, 'changePassword']);
 
         /*
         |--------------------------------------------------------------------------
-        | Land Management
+        | Lands
         |--------------------------------------------------------------------------
         */
         Route::prefix('lands')->group(function () {
@@ -79,15 +85,15 @@ Route::middleware('jwt.auth')->group(function () {
             Route::post('/', [LandController::class, 'store']);
 
             Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])
-                ->middleware([CheckTransactionPin::class]);
+                ->middleware(CheckTransactionPin::class);
 
             Route::post('/{id}/sell', [PurchaseController::class, 'sellUnits'])
-                ->middleware([CheckTransactionPin::class]);
+                ->middleware(CheckTransactionPin::class);
 
             Route::get('/{id}/units', [UserController::class, 'getUserUnitsForLand']);
         });
 
-        // User land & stats
+        // User
         Route::get('/user/lands', [UserController::class, 'getAllUserLands']);
         Route::get('/user/stats', [UserController::class, 'getUserStats']);
         Route::get('/transactions/user', [UserController::class, 'getUserTransactions']);
@@ -109,15 +115,16 @@ Route::middleware('jwt.auth')->group(function () {
         |--------------------------------------------------------------------------
         */
         Route::post('/deposit', [DepositController::class, 'initiateDeposit']);
+
         Route::post('/withdraw', [WithdrawalController::class, 'requestWithdrawal'])
-            ->middleware([CheckTransactionPin::class]);
+            ->middleware(CheckTransactionPin::class);
 
         Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
         Route::get('/withdrawal/retry', [WithdrawalController::class, 'retryPendingWithdrawals']);
 
         /*
         |--------------------------------------------------------------------------
-        | Bank Details + Paystack Helpers
+        | Bank & Paystack Helpers
         |--------------------------------------------------------------------------
         */
         Route::put('/user/bank-details', [UserController::class, 'updateBankDetails']);

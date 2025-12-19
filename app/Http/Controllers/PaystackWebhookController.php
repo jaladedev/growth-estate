@@ -12,9 +12,15 @@ class PaystackWebhookController extends Controller
 {
     public function handle(Request $request)
     {
-        // Verify Paystack signature
+
         $signature = $request->header('x-paystack-signature');
-        $computed  = hash_hmac(
+
+        if (! $signature) {
+            Log::warning('Missing Paystack signature');
+            return response()->json(['status' => 'invalid'], 400);
+        }
+
+        $computed = hash_hmac(
             'sha512',
             $request->getContent(),
             config('services.paystack.secret_key')
@@ -27,24 +33,26 @@ class PaystackWebhookController extends Controller
 
         $payload = $request->all();
 
-        if ($payload['event'] !== 'charge.success') {
-            return response()->json(['status' => 'ignored']);
+        if (
+            ($payload['event'] ?? null) !== 'charge.success' ||
+            ! isset($payload['data']['reference'], $payload['data']['amount'])
+        ) {
+            return response()->json(['status' => 'ignored'], 200);
         }
 
-        $data = $payload['data'];
-        $reference = $data['reference'];
-        $amountPaid = (int) $data['amount'];
+        $reference  = $payload['data']['reference'];
+        $amountPaid = (int) $payload['data']['amount'];
 
         $deposit = Deposit::where('reference', $reference)->first();
 
         if (! $deposit) {
             Log::warning('Webhook deposit not found', ['reference' => $reference]);
-            return response()->json(['status' => 'not_found']);
+            return response()->json(['status' => 'logged'], 200);
         }
 
         // Idempotency
         if ($deposit->status === 'completed') {
-            return response()->json(['status' => 'already_processed']);
+            return response()->json(['status' => 'already_processed'], 200);
         }
 
         // Amount integrity check
@@ -56,12 +64,11 @@ class PaystackWebhookController extends Controller
             ]);
 
             $deposit->update(['status' => 'failed']);
-            return response()->json(['status' => 'amount_mismatch'], 400);
+            return response()->json(['status' => 'logged'], 200);
         }
 
         DB::transaction(function () use ($deposit, $amountPaid) {
 
-            // Lock deposit
             $lockedDeposit = Deposit::where('id', $deposit->id)
                 ->lockForUpdate()
                 ->first();
@@ -70,30 +77,28 @@ class PaystackWebhookController extends Controller
                 return;
             }
 
-            // Lock user
             $user = User::where('id', $lockedDeposit->user_id)
                 ->lockForUpdate()
                 ->first();
 
-            // Credit balance
             $user->balance_kobo += $amountPaid;
             $user->save();
 
-            // Mark deposit
-            $lockedDeposit->status = 'completed';
-            $lockedDeposit->completed_at = now();
-            $lockedDeposit->save();
+            $lockedDeposit->update([
+                'status'       => 'completed',
+                'completed_at' => now(),
+            ]);
 
             DB::table('ledger_entries')->insert([
-                'user_id'        => $user->id,
-                'type'           => 'deposit',
-                'amount_kobo'    => $amountPaid,
-                'balance_after'  => $user->balance_kobo,
-                'reference'      => $lockedDeposit->reference,
-                'created_at'     => now(),
+                'uid'       => $user->id,
+                'type'          => 'deposit',
+                'amount_kobo'   => $amountPaid,
+                'balance_after'=> $user->balance_kobo,
+                'reference'     => $lockedDeposit->reference,
+                'created_at'    => now(),
             ]);
         });
 
-        return response()->json(['status' => 'processed']);
+        return response()->json(['status' => 'processed'], 200);
     }
 }
