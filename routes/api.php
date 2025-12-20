@@ -9,7 +9,7 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\WithdrawalController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PaystackWebhookController; 
-use App\Http\Comtrollers\MonnifyWebhookController;
+use App\Http\Controllers\MonnifyWebhookController;
 use App\Http\Middleware\CheckTransactionPin;
 
 /*
@@ -45,7 +45,7 @@ Route::get('/land', [LandController::class, 'index']);
 // deposit webhook 
 Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle'])
     ->withoutMiddleware(['auth:api', 'throttle']);
-Route::post('/webhooks/monnify', [MonnifyWebhookController::class, 'handle'])
+Route::post('/monnify/webhook', [MonnifyWebhookController::class, 'handle'])
    ->withoutMiddleware(['auth:api', 'throttle']);
 
 // Paystack redirect (frontend only)
