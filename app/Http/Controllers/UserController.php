@@ -337,30 +337,32 @@ class UserController extends Controller
             $unitsOwned = $user->purchases()->sum('units');
             $totalInvested = $user->purchases()->sum('total_amount_paid');
 
-            // If user->withdrawals() is not defined, this line will crash:
             $totalWithdrawn = method_exists($user, 'withdrawals')
-                ? $user->withdrawals()->where('status', 'completed')->sum('amount')
+                ? $user->withdrawals()->where('status', 'completed')->sum('amount_kobo') / 100
                 : 0;
 
             $pendingWithdrawals = method_exists($user, 'withdrawals')
                 ? $user->withdrawals()->where('status', 'pending')->count()
                 : 0;
 
-            $balance = $user->balance ?? 0;
+            $balance = $user->balance_kobo / 100 ?? 0;
 
             return response()->json([
                 'success' => true,
                 'data' => [
                     'lands_owned' => $landsOwned,
                     'units_owned' => $unitsOwned,
-                    'total_invested' => $totalInvested,
+                    'total_invested' => $totalInvested / 100,
                     'total_withdrawn' => $totalWithdrawn,
                     'pending_withdrawals' => $pendingWithdrawals,
                     'balance' => $balance,
                 ],
             ]);
         } catch (\Exception $e) {
-            Log::error('getUserStats error', ['message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            Log::error('getUserStats error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
 
             return response()->json([
                 'success' => false,
@@ -370,7 +372,7 @@ class UserController extends Controller
         }
     }
 
-   public function getUserTransactions()
+    public function getUserTransactions()
     {
         try {
             $user = JWTAuth::parseToken()->authenticate();
@@ -379,43 +381,45 @@ class UserController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
             }
 
-            // Fetch deposits
+            // Deposits (amount_kobo, transaction_fee, total_kobo)
             $deposits = Deposit::where('user_id', $user->id)
-                ->select('id', 'amount', 'status', 'created_at')
+                ->select('id', 'amount_kobo', 'transaction_fee', 'total_kobo', 'status', 'created_at')
                 ->get()
                 ->map(fn($d) => [
                     'type' => 'Deposit',
-                    'amount' => $d->amount,
+                    'amount' => $d->amount_kobo / 100,
+                    'transaction_fee' => $d->transaction_fee / 100,
+                    'total' => $d->total_kobo / 100,
                     'status' => ucfirst($d->status),
                     'date' => $d->created_at->toIso8601String(),
                 ]);
 
-            // Fetch withdrawals
+            // Withdrawals (amount_kobo)
             $withdrawals = Withdrawal::where('user_id', $user->id)
-                ->select('id', 'amount', 'status', 'created_at')
+                ->select('id', 'amount_kobo', 'status', 'created_at')
                 ->get()
                 ->map(fn($w) => [
                     'type' => 'Withdrawal',
-                    'amount' => $w->amount,
+                    'amount' => $w->amount_kobo / 100,
                     'status' => ucfirst($w->status),
                     'date' => $w->created_at->toIso8601String(),
                 ]);
 
-            // Fetch land transactions (purchases & sales)
-       $landTransactions = Transaction::where('user_id', $user->id)
-        ->select('id', 'land_id','type', 'units', 'amount', 'status', 'created_at')
-        ->with('land:id,title')
-        ->get()
-        ->map(function ($t) {
-            return [
-                'type' => ucfirst($t->type),    
-                'land' => $t->land->title ?? 'Unknown Land',
-                'amount' => abs($t->amount), 
-                'units' => abs($t->units),
-                'status' => ucfirst($t->status),
-                'date' => $t->created_at->toIso8601String(),
-            ];
-        });
+            // Land transactions
+            $landTransactions = Transaction::where('user_id', $user->id)
+                ->select('id', 'land_id','type', 'units', 'amount_kobo', 'status', 'created_at')
+                ->with('land:id,title')
+                ->get()
+                ->map(function ($t) {
+                    return [
+                        'type' => ucfirst($t->type),
+                        'land' => $t->land->title ?? 'Unknown Land',
+                        'amount' => abs($t->amount_kobo) / 100,
+                        'units' => abs($t->units),
+                        'status' => ucfirst($t->status),
+                        'date' => $t->created_at->toIso8601String(),
+                    ];
+                });
 
             // Combine all
             $transactions = collect()
@@ -438,6 +442,7 @@ class UserController extends Controller
             ], 500);
         }
     }
+
 
 
 }

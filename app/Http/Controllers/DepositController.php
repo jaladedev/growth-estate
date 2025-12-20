@@ -2,77 +2,77 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\User;
 use App\Models\Deposit;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Tymon\JWTAuth\Facades\JWTAuth;
+use App\Services\Payments\DepositService;
+use App\Services\Payments\PaystackService;
+use App\Services\Payments\MonnifyService;
 
 class DepositController extends Controller
 {
     /**
      * Initiate deposit
      */
-   public function initiateDeposit(Request $request)
+    public function initiateDeposit(Request $request)
     {
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            'amount' => 'required|numeric|min:1',
+            'amount'   => 'required|numeric|min:1',
+            'gateway' => 'required|in:paystack,monnify',
         ]);
 
-        // Original amount in kobo
-        $amountKobo = (int) ($request->amount * 100);
+        // Create deposit WITH gateway
+        $deposit = DepositService::createDeposit(
+            $user,
+            $request->amount,
+            $request->gateway
+        );
 
-        // Add 2% transaction fee
-        $transactionFee = (int) round($amountKobo * 0.02); // 2% of amount
-        $totalAmountKobo = $amountKobo + $transactionFee;
+        $callbackUrl = config('app.frontend_url') . "/wallet?reference={$deposit->reference}";
 
-        $reference  = 'DEP-' . Str::uuid();
+        if ($deposit->gateway === 'paystack') {
 
-        Deposit::create([
-            'user_id'        => $user->id,
-            'reference'      => $reference,
-            'amount_kobo'    => $amountKobo,       
-            'total_kobo'     => $totalAmountKobo,  
-            'transaction_fee'=> $transactionFee,
-            'status'         => 'pending',
-        ]);
+            $response = PaystackService::initialize(
+                $user->email,
+                $deposit->total_kobo,
+                $deposit->reference,
+                $callbackUrl
+            );
 
-        $callbackUrl = config('app.frontend_url') . "/wallet?reference={$reference}";
+            $paymentUrl = $response['data']['authorization_url'] ?? null;
 
-        $response = Http::withToken(config('services.paystack.secret_key'))
-            ->post('https://api.paystack.co/transaction/initialize', [
-                'email'        => $user->email,
-                'amount'       => $totalAmountKobo, 
-                'reference'    => $reference,
-                'callback_url' => $callbackUrl,
-            ]);
+        } else { // monnify
 
-        if (! $response->successful()) {
-            Log::error('Deposit init failed', [
-                'reference' => $reference,
-                'response'  => $response->json(),
-            ]);
+            $response = MonnifyService::initialize(
+                $user->email,
+                $deposit->reference,
+                $deposit->total_kobo,
+                $callbackUrl,
+                $user->name
+            );
 
+            $paymentUrl = $response['responseBody']['checkoutUrl'] ?? null;
+        }
+
+        if (! $paymentUrl) {
             return response()->json([
-                'error' => 'Unable to initialize deposit'
+                'error' => 'Payment initialization failed'
             ], 500);
         }
 
         return response()->json([
-            'payment_url' => $response['data']['authorization_url'],
-            'reference'   => $reference,
-            'transaction_fee' => $transactionFee / 100, 
-            'total_amount' => $totalAmountKobo / 100,
+            'payment_url'     => $paymentUrl,
+            'reference'       => $deposit->reference,
+            'gateway'         => $deposit->gateway,
+            'transaction_fee' => $deposit->transaction_fee / 100,
+            'total_amount'    => $deposit->total_kobo / 100,
         ]);
     }
 
-
     /**
-     * Frontend status check 
+     * Frontend status check
      */
     public function verifyDeposit(string $reference)
     {
@@ -84,6 +84,7 @@ class DepositController extends Controller
 
         return response()->json([
             'reference' => $deposit->reference,
+            'gateway'   => $deposit->gateway,
             'status'    => $deposit->status,
             'amount'    => $deposit->amount_kobo / 100,
         ]);

@@ -21,6 +21,7 @@ class Deposit extends Model
         'transaction_fee',
         'total_kobo',
         'status',
+        'gateway',
     ];
 
     protected $casts = [
