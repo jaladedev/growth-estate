@@ -11,7 +11,7 @@ use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PaystackWebhookController; 
 use App\Http\Controllers\MonnifyWebhookController;
 use App\Http\Middleware\CheckTransactionPin;
-
+use App\Http\Middleware\AdminMiddleware;
 /*
 |--------------------------------------------------------------------------
 | Public Routes
@@ -85,7 +85,8 @@ Route::middleware('jwt.auth')->group(function () {
         Route::prefix('lands')->group(function () {
             Route::get('/', [LandController::class, 'index']);
             Route::get('/{id}', [LandController::class, 'show']);
-            Route::post('/', [LandController::class, 'store']);
+            Route::post('/admin/create', [LandController::class, 'store'])->middleware(AdminMiddleware::class);
+
 
             Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])
                 ->middleware(CheckTransactionPin::class);
@@ -143,4 +144,20 @@ Route::middleware('jwt.auth')->group(function () {
         Route::get('/notifications/unread', [NotificationController::class, 'getUnreadNotifications']);
         Route::post('/notifications/read', [NotificationController::class, 'markAllAsRead']);
     });
+
+        /*
+        |--------------------------------------------------------------------------
+        | ADMIN ROUTES (JWT + Admin Role Required)
+        |--------------------------------------------------------------------------
+        */
+
+        // Route::prefix('admin')
+        //     ->middleware(['jwt.auth', AdminMiddleware::class])
+        //     ->group(function () {
+
+        //         // Dashboard Stats
+        //         Route::get('/dashboard/stats', [AdminDashboardController::class, 'stats']);
+        //         Route::get('/messages', [ContactController::class, 'index']);
+        //         Route::get('/messages/{id}', [ContactController::class, 'show']);
+
 });

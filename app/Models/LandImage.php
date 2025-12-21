@@ -11,8 +11,10 @@ class LandImage extends Model
 
     protected $fillable = ['land_id', 'image_path'];
 
-    public function land()
+    protected $appends = ['image_url'];
+
+    public function getImageUrlAttribute()
     {
-        return $this->belongsTo(Land::class);
+        return asset('storage/' . $this->image_path);
     }
 }
