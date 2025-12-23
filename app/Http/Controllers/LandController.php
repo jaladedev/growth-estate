@@ -12,7 +12,12 @@ class LandController extends Controller
 {
     public function index()
     {
-        return response()->json(Land::with('images')->get(), 200);
+        return response()->json(Land::with('images')->where('is_available', true)->get(), 200);
+    }
+
+    public function adminIndex()
+    {
+         return response()->json(Land::with('images')->get(), 200);
     }
 
     public function show($id)
