@@ -86,7 +86,7 @@ Route::middleware('jwt.auth')->group(function () {
             Route::get('/', [LandController::class, 'index']);
             Route::get('/{id}', [LandController::class, 'show']);
             Route::post('/admin/create', [LandController::class, 'store'])->middleware(AdminMiddleware::class);
-            Route::put('/admin/{id}', [LandController::class, 'update'])->middleware(AdminMiddleware::class);
+            Route::post('/admin/{id}', [LandController::class, 'update'])->middleware(AdminMiddleware::class);
             Route::patch('/admin/{id}/disable', [LandController::class, 'disable'])->middleware(AdminMiddleware::class);
             Route::patch('/admin/{id}/enable', [LandController::class, 'enable'])->middleware(AdminMiddleware::class);
     
