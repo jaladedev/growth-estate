@@ -162,4 +162,84 @@ class LandController extends Controller
 
         return response()->json(['message' => 'Purchase successful'], 200);
     }
+
+    public function update(Request $request, $id)
+    {
+        $land = Land::with('images')->find($id);
+
+        if (! $land) {
+            return response()->json(['message' => 'Land not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'title'           => 'sometimes|string|max:255',
+            'location'        => 'sometimes|string|max:255',
+            'size'            => 'sometimes|numeric',
+            'price_per_unit'  => 'sometimes|numeric',
+            'total_units'     => 'sometimes|integer|min:1',
+            'description'     => 'nullable|string',
+            'is_available'    => 'sometimes|boolean',
+            'images'          => 'nullable|array',
+            'images.*'        => 'image|mimes:jpg,jpeg,png|max:2048',
+            'remove_images'   => 'nullable|array', // image IDs
+        ]);
+
+        /** Update land fields */
+        $land->update($validated);
+
+        /** Remove selected images */
+        if ($request->filled('remove_images')) {
+            $images = LandImage::whereIn('id', $request->remove_images)->get();
+
+            foreach ($images as $img) {
+                Storage::disk('public')->delete($img->image_path);
+                $img->delete();
+            }
+        }
+
+        /** Add new images */
+        if ($request->hasFile('images')) {
+            foreach ($request->file('images') as $image) {
+                $path = $image->store('land_images', 'public');
+
+                $land->images()->create([
+                    'image_path' => $path
+                ]);
+            }
+        }
+
+        return response()->json([
+            'message' => 'Land updated successfully',
+            'land' => $land->load('images')
+        ]);
+    }
+
+   public function disable($id)
+    {
+        $land = Land::find($id);
+
+        if (! $land) {
+            return response()->json(['message' => 'Land not found'], 404);
+        }
+
+        $land->is_available = false;
+        $land->save();
+
+        return response()->json(['message' => 'Land disabled']);
+    }
+
+    public function enable($id)
+    {
+        $land = Land::find($id);
+
+        if (! $land) {
+            return response()->json(['message' => 'Land not found'], 404);
+        }
+
+        $land->is_available = true;
+        $land->save();
+
+        return response()->json(['message' => 'Land enabled']);
+    }
+
 }
