@@ -168,70 +168,75 @@ class LandController extends Controller
         return response()->json(['message' => 'Purchase successful'], 200);
     }
 
-public function update(Request $request, $id)
-{
-    $land = Land::with('images')->find($id);
+    public function update(Request $request, $id)
+    {
+        $land = Land::with('images', 'transactions')->find($id);
 
-    if (!$land) {
-        return response()->json(['message' => 'Land not found'], 404);
-    }
-
-    // Validate request
-    $validated = $request->validate([
-        'title'           => 'sometimes|string|max:255',
-        'location'        => 'sometimes|string|max:255',
-        'size'            => 'sometimes|numeric',
-        'price_per_unit'  => 'sometimes|numeric',
-        'total_units'     => 'sometimes|integer|min:1',
-        'description'     => 'nullable|string',
-        'is_available'    => 'sometimes|boolean',
-        'images'          => 'nullable|array',
-        'images.*'        => 'image|mimes:jpg,jpeg,png|max:2048',
-        'remove_images'   => 'nullable|array',
-    ]);
-
-    // Cast numeric/boolean
-    if (isset($validated['size'])) $validated['size'] = (float)$validated['size'];
-    if (isset($validated['price_per_unit'])) $validated['price_per_unit'] = (float)$validated['price_per_unit'];
-    if (isset($validated['total_units'])) $validated['total_units'] = (int)$validated['total_units'];
-    if (isset($validated['is_available'])) $validated['is_available'] = (bool)$validated['is_available'];
-
-    // Update land fields
-    $land->update(collect($validated)->except(['images', 'remove_images'])->toArray());
-
-    // Remove images
-    if (!empty($validated['remove_images'])) {
-        $images = LandImage::whereIn('id', $validated['remove_images'])->get();
-        foreach ($images as $img) {
-            Storage::disk('public')->delete($img->image_path);
-            $img->delete();
+        if (!$land) {
+            return response()->json(['message' => 'Land not found'], 404);
         }
-    }
 
-    // Add new images
-    if ($request->hasFile('images')) {
-        foreach ($request->file('images') as $image) {
-            if (!$image->isValid()) continue;
-            $path = $image->store('land_images', 'public');
-            $land->images()->create(['image_path' => $path]);
+        $validated = $request->validate([
+            'title'           => 'sometimes|string|max:255',
+            'location'        => 'sometimes|string|max:255',
+            'size'            => 'sometimes|numeric',
+            'price_per_unit'  => 'sometimes|numeric',
+            'total_units'     => 'sometimes|integer|min:1',
+            'description'     => 'nullable|string',
+            'is_available'    => 'sometimes|boolean',
+            'images'          => 'nullable|array',
+            'images.*'        => 'image|mimes:jpg,jpeg,png|max:2048',
+            'remove_images'   => 'nullable|array', // image IDs
+        ]);
+
+        // **Handle total_units adjustment**
+        if (isset($validated['total_units'])) {
+            // Calculate units already purchased
+            $purchasedUnits = $land->total_units - $land->available_units;
+
+            if ($validated['total_units'] < $purchasedUnits) {
+                return response()->json([
+                    'message' => "Total units cannot be less than already purchased units ({$purchasedUnits})."
+                ], 422);
+            }
+
+            // Adjust available_units accordingly
+            $validated['available_units'] = $validated['total_units'] - $purchasedUnits;
         }
+
+        // Update land fields except images
+        $land->update(collect($validated)->except(['images', 'remove_images'])->toArray());
+
+        // Remove selected images
+        if ($request->filled('remove_images')) {
+            $images = LandImage::whereIn('id', $request->remove_images)->get();
+            foreach ($images as $img) {
+                Storage::disk('public')->delete($img->image_path);
+                $img->delete();
+            }
+        }
+
+        // Add new images
+        if ($request->hasFile('images')) {
+            foreach ($request->file('images') as $image) {
+                if (!$image->isValid()) continue;
+                $path = $image->store('land_images', 'public');
+                $land->images()->create(['image_path' => $path]);
+            }
+        }
+
+        $land->load('images');
+        $images = $land->images->map(fn($img) => [
+            'id' => $img->id,
+            'image_path' => Storage::url($img->image_path),
+        ]);
+
+        return response()->json([
+            'message' => 'Land updated successfully',
+            'land' => $land->toArray(),
+            'images' => $images,
+        ], 200);
     }
-
-    $land->load('images');
-
-    $images = $land->images->map(fn($img) => [
-        'id' => $img->id,
-        'image_path' => Storage::url($img->image_path),
-    ]);
-
-    return response()->json([
-        'message' => 'Land updated successfully',
-        'land' => $land->toArray(),
-        'images' => $images
-    ], 200);
-}
-
-
 
    public function disable($id)
     {
