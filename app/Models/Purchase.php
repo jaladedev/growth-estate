@@ -14,11 +14,11 @@ class Purchase extends Model
         'user_id',
         'land_id',
         'units',                // Number of units purchased
-        'total_amount_paid',    // Total amount paid for the purchase
+        'total_amount_paid_kobo',    // Total amount paid for the purchase
         'purchase_date',        // Date of purchase
         'withdrawal_date',      // Date of withdrawal, if applicable
         'units_sold',           // Number of units sold
-        'total_amount_received', // Total amount received from sales
+        'total_amount_received_kobo', // Total amount received from sales
         'reference',
         'sell_date',            // Date of the sale
     ];
@@ -28,8 +28,8 @@ class Purchase extends Model
       'purchase_date' => 'datetime',
       'withdrawal_date' => 'datetime',
       'units_sold' => 'integer',           
-      'total_amount_received' => 'decimal:2', 
-      'total_amount_paid' => 'decimal:2',
+      'total_amount_received_kobo' => 'integer', 
+      'total_amount_paid_kobo' => 'integer',
       'sell_date' => 'datetime',
     ];
 

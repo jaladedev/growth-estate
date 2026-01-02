@@ -335,7 +335,7 @@ class UserController extends Controller
 
             $landsOwned = $user->purchases()->where('units', '>', 0)->distinct('land_id')->count('land_id');
             $unitsOwned = $user->purchases()->sum('units');
-            $totalInvested = $user->purchases()->sum('total_amount_paid');
+            $totalInvested = $user->purchases()->sum('total_amount_paid_kobo');
 
             $totalWithdrawn = method_exists($user, 'withdrawals')
                 ? $user->withdrawals()->where('status', 'completed')->sum('amount_kobo') / 100

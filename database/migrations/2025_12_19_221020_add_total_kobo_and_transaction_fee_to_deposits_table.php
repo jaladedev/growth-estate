@@ -6,24 +6,32 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::table('deposits', function (Blueprint $table) {
-            $table->unsignedBigInteger('transaction_fee')->default(0)->after('amount_kobo');
-            $table->unsignedBigInteger('total_kobo')->after('transaction_fee');
+            if (!Schema::hasColumn('deposits', 'transaction_fee')) {
+                $table->unsignedBigInteger('transaction_fee')
+                    ->default(0)
+                    ->after('amount_kobo');
+            }
+
+            if (!Schema::hasColumn('deposits', 'total_kobo')) {
+                $table->unsignedBigInteger('total_kobo')
+                    ->after('transaction_fee');
+            }
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::table('deposits', function (Blueprint $table) {
-            $table->dropColumn(['transaction_fee', 'total_kobo']);
+            if (Schema::hasColumn('deposits', 'transaction_fee')) {
+                $table->dropColumn('transaction_fee');
+            }
+
+            if (Schema::hasColumn('deposits', 'total_kobo')) {
+                $table->dropColumn('total_kobo');
+            }
         });
     }
 };

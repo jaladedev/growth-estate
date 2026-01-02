@@ -17,7 +17,7 @@ class User extends Authenticatable implements JWTSubject
         'name',
         'email',
         'password',
-        'balance',
+        'balance_kobo',
         'account_number',
         'bank_code',
         'bank_name',

@@ -8,21 +8,35 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('withdrawals', function (Blueprint $table) {
-            // Rename column and change type to integer
-            $table->renameColumn('amount', 'amount_kobo');
+        // Step 1: Rename column if it exists
+        if (Schema::hasColumn('withdrawals', 'amount')) {
+            Schema::table('withdrawals', function (Blueprint $table) {
+                $table->renameColumn('amount', 'amount_kobo');
+            });
+        }
 
-            // Change column type to integer
-            $table->integer('amount_kobo')->change();
-        });
+        // Step 2: Change type to integer if column exists
+        if (Schema::hasColumn('withdrawals', 'amount_kobo')) {
+            Schema::table('withdrawals', function (Blueprint $table) {
+                $table->integer('amount_kobo')->change();
+            });
+        }
     }
 
     public function down(): void
     {
-        Schema::table('withdrawals', function (Blueprint $table) {
-            // Revert column type and name
-            $table->decimal('amount', 15, 2)->change();
-            $table->renameColumn('amount_kobo', 'amount');
-        });
+        // Step 1: Revert type if column exists
+        if (Schema::hasColumn('withdrawals', 'amount_kobo')) {
+            Schema::table('withdrawals', function (Blueprint $table) {
+                $table->decimal('amount_kobo', 15, 2)->change();
+            });
+        }
+
+        // Step 2: Rename back to original
+        if (Schema::hasColumn('withdrawals', 'amount_kobo')) {
+            Schema::table('withdrawals', function (Blueprint $table) {
+                $table->renameColumn('amount_kobo', 'amount');
+            });
+        }
     }
 };
