@@ -4,7 +4,6 @@ namespace App\Notifications;
 
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -12,49 +11,54 @@ class SaleConfirmed extends Notification implements ShouldQueue
 {
     use Queueable;
 
-    protected $purchase;
+    protected $transaction;
 
-    public function __construct(Model $purchase)
+    public function __construct($transaction)
     {
-        $this->purchase = $purchase;
+        $this->transaction = $transaction;
     }
 
-    // Delivery channels
+    /**
+     * Delivery channels
+     */
     public function via($notifiable)
     {
-        return ['mail', 'database', 'broadcast'];
+        // Use database and mail; broadcast optional
+        return ['database', 'mail'];
     }
 
-    // Database representation
+    /**
+     * Database representation
+     */
     public function toDatabase($notifiable)
     {
         return [
-            'purchase_id' => $this->purchase->id,
-            'units' => $this->purchase->units,
-            'total_amount_received' => $this->purchase->amount,
-            'message' => 'Your sale has been confirmed!',
+            'transaction_id' => $this->transaction->id,
+            'units' => $this->transaction->units,
+            'amount_kobo' => $this->transaction->amount_kobo,
+            'message' => 'Your sale of ' . $this->transaction->units . ' units has been confirmed!',
             'created_at' => now(),
         ];
     }
 
-    // Optional: Email representation
+    /**
+     * Email representation
+     */
     public function toMail($notifiable)
     {
         return (new MailMessage)
-                    ->subject('Sale Confirmation')
-                    ->line('Your sale of ' . $this->purchase->units . ' units has been confirmed!')
-                    ->action('View Sale', url('/purchases/' . $this->purchase->id))
-                    ->line('Thank you for your transacting with us!');
+            ->subject('Sale Confirmation')
+            ->line('Your sale of ' . $this->transaction->units . ' units has been confirmed!')
+            ->line('Amount received: ₦' . number_format($this->transaction->amount_kobo / 100, 2))
+            ->action('View Sale', url('/transactions/' . $this->transaction->id))
+            ->line('Thank you for transacting with us!');
     }
 
+    /**
+     * Fallback array representation
+     */
     public function toArray($notifiable)
     {
         return $this->toDatabase($notifiable);
     }
-    // public function toBroadcast($notifiable)
-    // {
-    //     return new BroadcastMessage([
-    //         'message' => 'Your purchase of ' . $this->purchase->units . ' units has been confirmed!'
-    //     ]);
-    // }
 }

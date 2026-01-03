@@ -59,7 +59,7 @@ class PurchaseController extends Controller
                 $land->is_available = $land->available_units > 0;
                 $land->save();
 
-                // 🧾 Transaction record
+                // Transaction record
                 $transaction = Transaction::create([
                     'land_id'     => $land->id,
                     'user_id'     => $user->id,
@@ -71,7 +71,7 @@ class PurchaseController extends Controller
                     'message'     => 'Land units purchased successfully',
                 ]);
 
-                // 📊 Purchase summary
+                // Purchase summary
                 $purchase = Purchase::firstOrCreate(
                     ['user_id' => $user->id, 'land_id' => $land->id],
                     [
