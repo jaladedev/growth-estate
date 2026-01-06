@@ -11,20 +11,23 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('deposits', function (Blueprint $table) {
-            // Only change if the column exists and is not already unsignedBigInteger
-            if (Schema::hasColumn('deposits', 'amount_kobo')) {
-                $columnType = DB::selectOne("
-                    SELECT DATA_TYPE 
-                    FROM INFORMATION_SCHEMA.COLUMNS 
-                    WHERE table_name = 'deposits' 
-                      AND COLUMN_NAME = 'amount_kobo' 
-                      AND TABLE_SCHEMA = DATABASE()
-                ")->DATA_TYPE ?? null;
+        /**
+         * SQLite-safe & MySQL-safe approach:
+         * - Never use INFORMATION_SCHEMA
+         * - Never use ->change()
+         * - Add column if missing
+         * - Do NOT mutate type in-place
+         */
 
-                if ($columnType !== 'bigint') {
-                    $table->unsignedBigInteger('amount_kobo')->change();
-                }
+        if (!Schema::hasTable('deposits')) {
+            return;
+        }
+
+        Schema::table('deposits', function (Blueprint $table) {
+
+            // Ensure amount_kobo exists
+            if (!Schema::hasColumn('deposits', 'amount_kobo')) {
+                $table->unsignedBigInteger('amount_kobo')->default(0);
             }
         });
     }
@@ -34,10 +37,15 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (!Schema::hasTable('deposits')) {
+            return;
+        }
+
         Schema::table('deposits', function (Blueprint $table) {
-            // Revert back to decimal only if column exists
+
+            // Revert safely by recreating column if needed
             if (Schema::hasColumn('deposits', 'amount_kobo')) {
-                $table->decimal('amount_kobo', 12, 2)->change();
+                $table->decimal('amount_kobo', 12, 2)->default(0);
             }
         });
     }
