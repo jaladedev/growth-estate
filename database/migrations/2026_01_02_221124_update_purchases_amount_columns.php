@@ -5,62 +5,100 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
-        // Rename columns if needed
+        if (!Schema::hasTable('purchases')) {
+            return;
+        }
+
+        /**
+         * STEP 1: Add kobo columns safely
+         */
         Schema::table('purchases', function (Blueprint $table) {
-            if (Schema::hasColumn('purchases', 'total_amount_paid')) {
-                $table->renameColumn('total_amount_paid', 'total_amount_paid_kobo');
+
+            if (!Schema::hasColumn('purchases', 'total_amount_paid_kobo')) {
+                $table->unsignedBigInteger('total_amount_paid_kobo')->default(0);
             }
-            if (Schema::hasColumn('purchases', 'total_amount_received')) {
-                $table->renameColumn('total_amount_received', 'total_amount_received_kobo');
+
+            if (!Schema::hasColumn('purchases', 'total_amount_received_kobo')) {
+                $table->unsignedBigInteger('total_amount_received_kobo')->default(0);
             }
         });
 
-        // Convert existing values from naira to kobo
-        DB::statement('
-            UPDATE purchases 
-            SET 
-                total_amount_paid_kobo = total_amount_paid_kobo * 100,
-                total_amount_received_kobo = total_amount_received_kobo * 100
-        ');
+        /**
+         * STEP 2: Copy data (naira → kobo)
+         */
+        if (
+            Schema::hasColumn('purchases', 'total_amount_paid') &&
+            Schema::hasColumn('purchases', 'total_amount_received')
+        ) {
+            DB::table('purchases')->update([
+                'total_amount_paid_kobo'     => DB::raw('total_amount_paid * 100'),
+                'total_amount_received_kobo' => DB::raw('total_amount_received * 100'),
+            ]);
+        }
 
-        // Change column types to unsignedBigInteger (kobo)
+        /**
+         * STEP 3: Drop legacy columns
+         */
         Schema::table('purchases', function (Blueprint $table) {
-            $table->unsignedBigInteger('total_amount_paid_kobo')
-                ->default(0)
-                ->change();
 
-            $table->unsignedBigInteger('total_amount_received_kobo')
-                ->default(0)
-                ->change();
+            if (Schema::hasColumn('purchases', 'total_amount_paid')) {
+                $table->dropColumn('total_amount_paid');
+            }
+
+            if (Schema::hasColumn('purchases', 'total_amount_received')) {
+                $table->dropColumn('total_amount_received');
+            }
         });
     }
 
     public function down(): void
     {
-        // Convert back from kobo to naira
-        DB::statement('
-            UPDATE purchases 
-            SET 
-                total_amount_paid_kobo = total_amount_paid_kobo / 100,
-                total_amount_received_kobo = total_amount_received_kobo / 100
-        ');
+        if (!Schema::hasTable('purchases')) {
+            return;
+        }
 
-        // Change column types back to decimal
+        /**
+         * STEP 1: Restore decimal columns
+         */
         Schema::table('purchases', function (Blueprint $table) {
-            $table->decimal('total_amount_paid_kobo', 10, 2)->change();
-            $table->decimal('total_amount_received_kobo', 10, 2)->change();
+
+            if (!Schema::hasColumn('purchases', 'total_amount_paid')) {
+                $table->decimal('total_amount_paid', 12, 2)->default(0);
+            }
+
+            if (!Schema::hasColumn('purchases', 'total_amount_received')) {
+                $table->decimal('total_amount_received', 12, 2)->default(0);
+            }
         });
 
-        // Rename columns back to original
+        /**
+         * STEP 2: Copy data back (kobo → naira)
+         */
+        if (
+            Schema::hasColumn('purchases', 'total_amount_paid_kobo') &&
+            Schema::hasColumn('purchases', 'total_amount_received_kobo')
+        ) {
+            DB::table('purchases')->update([
+                'total_amount_paid'     => DB::raw('total_amount_paid_kobo / 100'),
+                'total_amount_received' => DB::raw('total_amount_received_kobo / 100'),
+            ]);
+        }
+
+        /**
+         * STEP 3: Drop kobo columns
+         */
         Schema::table('purchases', function (Blueprint $table) {
+
             if (Schema::hasColumn('purchases', 'total_amount_paid_kobo')) {
-                $table->renameColumn('total_amount_paid_kobo', 'total_amount_paid');
+                $table->dropColumn('total_amount_paid_kobo');
             }
+
             if (Schema::hasColumn('purchases', 'total_amount_received_kobo')) {
-                $table->renameColumn('total_amount_received_kobo', 'total_amount_received');
+                $table->dropColumn('total_amount_received_kobo');
             }
         });
     }

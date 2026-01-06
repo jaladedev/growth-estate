@@ -8,23 +8,32 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (!Schema::hasTable('deposits')) {
+            return;
+        }
+
         Schema::table('deposits', function (Blueprint $table) {
+
             if (!Schema::hasColumn('deposits', 'transaction_fee')) {
                 $table->unsignedBigInteger('transaction_fee')
-                    ->default(0)
-                    ->after('amount_kobo');
+                    ->default(0);
             }
 
             if (!Schema::hasColumn('deposits', 'total_kobo')) {
                 $table->unsignedBigInteger('total_kobo')
-                    ->after('transaction_fee');
+                    ->default(0);
             }
         });
     }
 
     public function down(): void
     {
+        if (!Schema::hasTable('deposits')) {
+            return;
+        }
+
         Schema::table('deposits', function (Blueprint $table) {
+
             if (Schema::hasColumn('deposits', 'transaction_fee')) {
                 $table->dropColumn('transaction_fee');
             }
