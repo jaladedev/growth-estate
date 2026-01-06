@@ -11,8 +11,8 @@ return new class extends Migration
         Schema::table('users', function (Blueprint $table) {
 
             /**
-             * DO NOT use ->change() (breaks SQLite)
-             * Add column only if missing
+             *  DO NOT use ->change() (breaks SQLite)
+             *  Add column only if missing
              */
             if (!Schema::hasColumn('users', 'balance_kobo')) {
                 $table->unsignedBigInteger('balance_kobo')->default(0);
@@ -87,34 +87,6 @@ return new class extends Migration
             if (Schema::hasIndex('users', ['account_number', 'bank_code'])) {
                 $table->dropIndex(['account_number', 'bank_code']);
             }
-        });
-    }
-};
-                    ->after('account_name');
-            }
-
-            // Index (safe check)
-            $table->index(['account_number', 'bank_code']);
-        });
-    }
-
-    public function down(): void
-    {
-        Schema::table('users', function (Blueprint $table) {
-
-            // Restore old balance only if rolling back
-            if (!Schema::hasColumn('users', 'balance')) {
-                $table->decimal('balance', 15, 2)
-                    ->default(0);
-            }
-
-            $table->dropColumn([
-                'is_suspended',
-                'last_transaction_at',
-                'bank_verified',
-            ]);
-
-            $table->dropIndex(['account_number', 'bank_code']);
         });
     }
 };
