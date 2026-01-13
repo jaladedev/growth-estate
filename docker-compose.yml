@@ -3,12 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: laravel-app
     container_name: laravel-app
     restart: unless-stopped
     working_dir: /var/www/html
     volumes:
-      - .:/var/www/html
+      - ./laravel:/var/www/html
     networks:
       - laravel
     depends_on:
@@ -21,7 +20,7 @@ services:
     ports:
       - "8000:80"
     volumes:
-      - .:/var/www/html
+      - ./laravel:/var/www/html
       - ./nginx/conf.d:/etc/nginx/conf.d
     depends_on:
       - app
