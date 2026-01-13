@@ -92,11 +92,14 @@ class AuthController extends Controller
                 ],
             ]);
         } catch (ValidationException $e) {
-            return $this->sendErrorResponse('Validation errors occurred', 422, $e->validator->errors());
+            return $this->sendErrorResponse(
+                'Validation errors occurred',
+                422,
+                $e->validator->errors()
+            );
         }
 
         try {
-            // Create the user and generate a verification code
             $user = User::create([
                 'name' => $request->name,
                 'email' => $request->email,
@@ -107,9 +110,13 @@ class AuthController extends Controller
             $user->verification_code = $verificationCode;
             $user->save();
 
-            // Send verification email
-            Mail::to($user->email)->send(new VerifyEmailMail($user, $verificationCode));
             $token = JWTAuth::fromUser($user);
+
+            try {
+                Mail::to($user->email)->queue(new VerifyEmailMail($user, $verificationCode));
+            } catch (\Exception $e) {
+                Log::error("Failed to send verification email to user {$user->id}: " . $e->getMessage());
+            }
 
             return $this->sendSuccessResponse([
                 'user' => $user,
@@ -117,10 +124,16 @@ class AuthController extends Controller
             ], 'Registration successful. Please check your email for the verification code.', 201);
 
         } catch (\Exception $e) {
-            return $this->sendErrorResponse('Registration failed. Please try again later.', 500, ['exception' => $e->getMessage()]);
+            // Catch-all for unexpected errors
+            Log::error("User registration failed: " . $e->getMessage());
+
+            return $this->sendErrorResponse(
+                'Registration failed. Please try again later.',
+                500,
+                ['exception' => $e->getMessage()]
+            );
         }
     }
-
     // Log in an existing user
     public function login(Request $request)
     {

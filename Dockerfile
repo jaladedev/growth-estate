@@ -2,6 +2,7 @@ FROM php:8.2-fpm
 
 WORKDIR /var/www/html
 
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
     curl \
@@ -12,13 +13,14 @@ RUN apt-get update && apt-get install -y \
     libxml2-dev \
     libzip-dev \
     libpq-dev \
+    supervisor \
     && docker-php-ext-install pdo_pgsql mbstring exif pcntl bcmath gd zip
 
+# Install Composer globally
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# DO NOT copy files here when using volumes
-# DO NOT run composer or migrations here
+# Set permissions 
+RUN chown -R www-data:www-data /var/www/html 
 
-RUN chown -R www-data:www-data /var/www/html
-
+# CMD for app container
 CMD ["php-fpm"]

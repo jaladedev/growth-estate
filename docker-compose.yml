@@ -1,4 +1,5 @@
 services:
+  # Laravel PHP-FPM
   app:
     build:
       context: .
@@ -7,12 +8,13 @@ services:
     restart: unless-stopped
     working_dir: /var/www/html
     volumes:
-      - ./laravel:/var/www/html
+      - ./:/var/www/html
     networks:
       - laravel
     depends_on:
       - db
 
+  # Nginx webserver
   webserver:
     image: nginx:alpine
     container_name: nginx-server
@@ -20,13 +22,14 @@ services:
     ports:
       - "8000:80"
     volumes:
-      - ./laravel:/var/www/html
+      - ./:/var/www/html
       - ./nginx/conf.d:/etc/nginx/conf.d
     depends_on:
       - app
     networks:
       - laravel
 
+  # Postgres database
   db:
     image: postgres:16
     container_name: postgres-db
@@ -42,6 +45,7 @@ services:
     networks:
       - laravel
 
+  # pgAdmin
   pgadmin:
     image: dpage/pgadmin4
     container_name: pgadmin
@@ -53,6 +57,42 @@ services:
       PGADMIN_DEFAULT_PASSWORD: admin
     depends_on:
       - db
+    networks:
+      - laravel
+
+  # Queue worker
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: laravel-queue
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    networks:
+      - laravel
+    depends_on:
+      - app
+      - db
+    command: sh -c "php artisan queue:work --sleep=3 --tries=3"
+    environment:
+      APP_ENV: local
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: growthpoles
+      DB_USERNAME: laravel
+      DB_PASSWORD: laravel
+      QUEUE_CONNECTION: database
+
+  # MailHog
+  mailhog:
+    image: mailhog/mailhog
+    container_name: mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
     networks:
       - laravel
 
