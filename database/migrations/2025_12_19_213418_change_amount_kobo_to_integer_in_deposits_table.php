@@ -6,19 +6,8 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
-        /**
-         * SQLite-safe & MySQL-safe approach:
-         * - Never use INFORMATION_SCHEMA
-         * - Never use ->change()
-         * - Add column if missing
-         * - Do NOT mutate type in-place
-         */
-
         if (!Schema::hasTable('deposits')) {
             return;
         }
@@ -32,9 +21,6 @@ return new class extends Migration
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         if (!Schema::hasTable('deposits')) {

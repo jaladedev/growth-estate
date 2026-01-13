@@ -1,7 +1,4 @@
-version: '3.8'
-
 services:
-  # 🐘 Laravel Application
   app:
     build:
       context: .
@@ -14,8 +11,9 @@ services:
       - .:/var/www/html
     networks:
       - laravel
+    depends_on:
+      - db
 
-  # 🌐 Nginx Web Server
   webserver:
     image: nginx:alpine
     container_name: nginx-server
@@ -30,35 +28,30 @@ services:
     networks:
       - laravel
 
-  # 🐬 MySQL Database
   db:
-    image: mysql:8
-    container_name: mysql-db
+    image: postgres:16
+    container_name: postgres-db
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: growthpoles
-      MYSQL_USER: laravel
-      MYSQL_PASSWORD: laravel
+      POSTGRES_DB: growthpoles
+      POSTGRES_USER: laravel
+      POSTGRES_PASSWORD: laravel
     ports:
-      - "3306:3306"
+      - "5432:5432"
     volumes:
-      - dbdata:/var/lib/mysql
+      - pgdata:/var/lib/postgresql/data
     networks:
       - laravel
 
-  # 🧭 phpMyAdmin (optional, for DB access via browser)
-  phpmyadmin:
-    image: phpmyadmin/phpmyadmin:latest
-    container_name: phpmyadmin
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
     restart: unless-stopped
     ports:
       - "8080:80"
     environment:
-      PMA_HOST: db
-      PMA_USER: laravel
-      PMA_PASSWORD: laravel
-      PMA_PORT: 3306
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
     depends_on:
       - db
     networks:
@@ -68,4 +61,4 @@ networks:
   laravel:
 
 volumes:
-  dbdata:
+  pgdata:

@@ -13,9 +13,6 @@ return new class extends Migration
             return;
         }
 
-        /**
-         * STEP 1: Add kobo columns safely
-         */
         Schema::table('purchases', function (Blueprint $table) {
 
             if (!Schema::hasColumn('purchases', 'total_amount_paid_kobo')) {
@@ -27,9 +24,6 @@ return new class extends Migration
             }
         });
 
-        /**
-         * STEP 2: Copy data (naira → kobo)
-         */
         if (
             Schema::hasColumn('purchases', 'total_amount_paid') &&
             Schema::hasColumn('purchases', 'total_amount_received')
@@ -40,9 +34,6 @@ return new class extends Migration
             ]);
         }
 
-        /**
-         * STEP 3: Drop legacy columns
-         */
         Schema::table('purchases', function (Blueprint $table) {
 
             if (Schema::hasColumn('purchases', 'total_amount_paid')) {
@@ -61,9 +52,6 @@ return new class extends Migration
             return;
         }
 
-        /**
-         * STEP 1: Restore decimal columns
-         */
         Schema::table('purchases', function (Blueprint $table) {
 
             if (!Schema::hasColumn('purchases', 'total_amount_paid')) {
@@ -75,9 +63,6 @@ return new class extends Migration
             }
         });
 
-        /**
-         * STEP 2: Copy data back (kobo → naira)
-         */
         if (
             Schema::hasColumn('purchases', 'total_amount_paid_kobo') &&
             Schema::hasColumn('purchases', 'total_amount_received_kobo')
@@ -88,9 +73,6 @@ return new class extends Migration
             ]);
         }
 
-        /**
-         * STEP 3: Drop kobo columns
-         */
         Schema::table('purchases', function (Blueprint $table) {
 
             if (Schema::hasColumn('purchases', 'total_amount_paid_kobo')) {
