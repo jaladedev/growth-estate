@@ -11,7 +11,8 @@ class Land extends Model
 
     protected $fillable = [
         'title', 'location', 'size', 'price_per_unit', 'total_units',
-        'available_units', 'is_available', 'description'
+        'available_units', 'is_available', 'description', 'coordinates',
+        'lat', 'lng'
     ];
 
     protected $attributes = [
@@ -48,5 +49,32 @@ class Land extends Model
     public function images()
     {
         return $this->hasMany(LandImage::class);
+    }
+
+    protected $appends = [
+        'units_sold',
+        'sold_percentage',
+        'map_color'
+    ];
+
+    public function getUnitsSoldAttribute()
+    {
+        return $this->total_units - $this->available_units;
+    }
+
+    public function getSoldPercentageAttribute()
+    {
+        if ($this->total_units === 0) return 0;
+        return round(($this->units_sold / $this->total_units) * 100, 2);
+    }
+
+    public function getMapColorAttribute()
+    {
+        return match (true) {
+            $this->sold_percentage < 25 => 'green',
+            $this->sold_percentage < 50 => 'yellow',
+            $this->sold_percentage < 75 => 'orange',
+            default => 'red',
+        };
     }
 }

@@ -7,7 +7,6 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Tymon\JWTAuth\Contracts\JWTSubject;
 use Illuminate\Support\Str;
-use Carbon\Carbon;
 
 class User extends Authenticatable implements JWTSubject
 {
@@ -62,17 +61,80 @@ class User extends Authenticatable implements JWTSubject
         return [];
     }
 
-    public function purchases()
+    /* 
+     | Relationships
+    */
+
+    // Wallet ledger
+    public function ledgerEntries()
+    {
+        return $this->hasMany(LedgerEntry::class, 'uid', 'id');
+    }
+
+    // Transactions (purchases / sales)
+     public function purchases()
     {
         return $this->hasMany(Purchase::class);
     }
 
+    public function transactions()
+    {
+        return $this->hasMany(Transaction::class);
+    }
+
+    // Owned lands with units
     public function lands()
     {
         return $this->belongsToMany(Land::class, 'user_land')
-                    ->withPivot('units')
-                    ->withTimestamps();
+            ->withPivot('units')
+            ->withTimestamps();
     }
+
+    // Direct access to user_land rows
+    public function userLands()
+    {
+        return $this->hasMany(UserLand::class);
+    }
+
+    /* 
+     | Wallet Logic 
+    */
+
+    public function deposit(int $amountKobo, string $reference = null)
+    {
+        $this->increment('balance_kobo', $amountKobo);
+
+        LedgerEntry::create([
+            'uid' => $this->id,
+            'type' => 'deposit',
+            'amount_kobo' => $amountKobo,
+            'balance_after' => $this->balance_kobo,
+            'reference' => $reference ?? 'DEP-' . now()->timestamp,
+        ]);
+    }
+
+    public function withdraw(int $amountKobo, string $reference = null): bool
+    {
+        if ($this->balance_kobo < $amountKobo) {
+            return false;
+        }
+
+        $this->decrement('balance_kobo', $amountKobo);
+
+        LedgerEntry::create([
+            'uid' => $this->id,
+            'type' => 'withdrawal',
+            'amount_kobo' => $amountKobo,
+            'balance_after' => $this->balance_kobo,
+            'reference' => $reference ?? 'WDL-' . now()->timestamp,
+        ]);
+
+        return true;
+    }
+
+    /* 
+     | Email Verification
+    */
 
     public function sendEmailVerificationCode()
     {
@@ -80,38 +142,23 @@ class User extends Authenticatable implements JWTSubject
         $this->verification_code_expiry = now()->addMinutes(30);
         $this->save();
 
-        try {
-            \Mail::to($this->email)->send(new \App\Mail\VerifyEmailMail($this->verification_code));
-        } catch (\Exception $e) {
-            // Handle the failure case if needed
-            \Log::error("Failed to send verification email: " . $e->getMessage());
-        }
+        \Mail::to($this->email)->send(
+            new \App\Mail\VerifyEmailMail($this->verification_code)
+        );
     }
 
-    public function verifyEmail($code)
+    public function verifyEmail(string $code): bool
     {
-        if ($this->verification_code === $code && now()->lessThanOrEqualTo($this->verification_code_expiry)) {
-            $this->email_verified_at = now();
-            $this->verification_code = null;
-            $this->verification_code_expiry = null;
-            $this->save();
-            return true;
-        }
+        if (
+            $this->verification_code === $code &&
+            now()->lessThanOrEqualTo($this->verification_code_expiry)
+        ) {
+            $this->update([
+                'email_verified_at' => now(),
+                'verification_code' => null,
+                'verification_code_expiry' => null,
+            ]);
 
-        return false;
-    }
-
-    public function deposit($amount)
-    {
-        $this->balance += $amount;
-        $this->save();
-    }
-
-    public function withdraw($amount)
-    {
-        if ($this->balance >= $amount) {
-            $this->balance -= $amount;
-            $this->save();
             return true;
         }
 
