@@ -290,6 +290,7 @@ class LandController extends Controller
             'location' => $land->location,
             'price_per_unit' => $land->price_per_unit,
             'total_units' => $land->total_units,
+            'is_available' => (bool) $land->is_available,
             'available_units' => $land->available_units,
             'units_sold' => $land->total_units - $land->available_units,
             'sold_percentage' => $land->total_units

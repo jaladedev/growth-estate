@@ -77,21 +77,33 @@ Route::middleware('jwt.auth')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::post('/user/change-password', [AuthController::class, 'changePassword']);
 
+       Route::prefix('lands')->group(function () {
+
         /*
         |--------------------------------------------------------------------------
-        | Lands
+        | ADMIN ROUTES 
         |--------------------------------------------------------------------------
         */
-        Route::prefix('lands')->group(function () {
-            Route::get('/', [LandController::class, 'index']);
-            Route::get('/{id}', [LandController::class, 'show']);
-            Route::get('/admin/show', [LandController::class, 'adminIndex'])->middleware(AdminMiddleware::class);
-            Route::post('/admin/create', [LandController::class, 'store'])->middleware(AdminMiddleware::class);
-            Route::post('/admin/{id}', [LandController::class, 'update'])->middleware(AdminMiddleware::class);
-            Route::patch('/admin/{id}/disable', [LandController::class, 'disable'])->middleware(AdminMiddleware::class);
-            Route::patch('/admin/{id}/enable', [LandController::class, 'enable'])->middleware(AdminMiddleware::class);
-    
+            Route::get('/admin/show', [LandController::class, 'adminIndex'])
+                ->middleware(AdminMiddleware::class);
 
+            Route::post('/admin/create', [LandController::class, 'store'])
+                ->middleware(AdminMiddleware::class);
+
+            Route::post('/admin/{id}', [LandController::class, 'update'])
+                ->middleware(AdminMiddleware::class);
+
+            Route::patch('/admin/{id}/disable', [LandController::class, 'disable'])
+                ->middleware(AdminMiddleware::class);
+
+            Route::patch('/admin/{id}/enable', [LandController::class, 'enable'])
+                ->middleware(AdminMiddleware::class);
+
+            /*
+            |--------------------------------------------------------------------------
+            | USER ACTIONS
+            |--------------------------------------------------------------------------
+            */
             Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])
                 ->middleware(CheckTransactionPin::class);
 
@@ -99,7 +111,16 @@ Route::middleware('jwt.auth')->group(function () {
                 ->middleware(CheckTransactionPin::class);
 
             Route::get('/{id}/units', [UserController::class, 'getUserUnitsForLand']);
+
+            /*
+            |--------------------------------------------------------------------------
+            | VERIFIED USER
+            |--------------------------------------------------------------------------
+            */
+            Route::get('/', [LandController::class, 'index']);
+            Route::get('/{id}', [LandController::class, 'show']);
         });
+
 
         // User
         Route::get('/user/lands', [UserController::class, 'getAllUserLands']);
