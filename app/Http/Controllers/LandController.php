@@ -10,37 +10,86 @@ use App\Models\LedgerEntry;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
-use Grimzy\LaravelMysqlSpatial\Types\Point;
 use Illuminate\Validation\ValidationException;
 
 class LandController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $lands = Land::with('images')
-            ->where('is_available', true)
-            ->get()
-            ->map(fn ($land) => $this->mapPayload($land));
+        $cacheKey = 'lands_index_' . md5(json_encode($request->all()));
 
-        return response()->json($lands);
+        return Cache::remember($cacheKey, now()->addMinutes(5), function () use ($request) {
+            $query = Land::with('images')
+                ->where('is_available', true);
+
+            // Bounding box filter (map viewport)
+            if ($request->filled(['north', 'south', 'east', 'west'])) {
+                $query->whereBetween('lat', [$request->south, $request->north])
+                      ->whereBetween('lng', [$request->west, $request->east]);
+            }
+
+            return $this->success(
+                $query->get()->map(fn ($land) => $this->mapPayload($land))
+            );
+        });
     }
 
+    /**
+     * Lightweight map-only endpoint (markers)
+     */
+    public function mapIndex(Request $request)
+    {
+        $query = Land::query()
+            ->where('is_available', true)
+            ->whereNotNull('lat')
+            ->whereNotNull('lng');
+
+        if ($request->filled(['north', 'south', 'east', 'west'])) {
+            $query->whereBetween('lat', [$request->south, $request->north])
+                  ->whereBetween('lng', [$request->west, $request->east]);
+        }
+
+        return $this->success(
+            $query->get()->map(fn ($land) => [
+                'id' => $land->id,
+                'title' => $land->title,
+                'lat' => $land->lat,
+                'lng' => $land->lng,
+                'price_per_unit' => $land->price_per_unit,
+                'available_units' => $land->available_units,
+                'map_color' => $this->getMapColor($land),
+            ])
+        );
+    }
+
+    /**
+     * Single land
+     */
     public function show($id)
     {
         $land = Land::with('images')->find($id);
 
         if (! $land) {
-            return response()->json(['message' => 'Land not found'], 404);
+            return $this->error('Land not found', 404);
         }
 
-        return response()->json($this->mapPayload($land));
+        return $this->success($this->mapPayload($land));
     }
+
+    /* =====================================================
+     | ADMIN ENDPOINTS
+     |===================================================== */
 
     public function adminIndex()
     {
-        return response()->json(
-            Land::with('images')->get()->map(fn ($land) => $this->mapPayload($land))
+        $this->authorizeAdmin();
+
+        return $this->success(
+            Land::with('images')
+                ->get()
+                ->map(fn ($land) => $this->mapPayload($land))
         );
     }
 
@@ -58,35 +107,24 @@ class LandController extends Controller
             'lat' => 'nullable|numeric|between:-90,90',
             'lng' => 'nullable|numeric|between:-180,180',
             'images' => 'nullable|array',
-            'images.*' => 'image|mimes:jpg,jpeg,png|max:2048',
+            'images.*' => 'image|max:2048',
             'is_available' => 'sometimes|boolean',
         ]);
 
         $land = Land::create([
-            'title' => $data['title'],
-            'location' => $data['location'],
-            'size' => $data['size'],
-            'price_per_unit' => $data['price_per_unit'],
-            'total_units' => $data['total_units'],
+            ...$data,
             'available_units' => $data['total_units'],
-            'description' => $data['description'] ?? null,
             'is_available' => $data['is_available'] ?? true,
-
-            'lat' => $data['lat'] ?? null,
-            'lng' => $data['lng'] ?? null,
-
-            // spatial column
-            // 'coordinates' => isset($data['lat'], $data['lng'])
-            //     ? new Point($data['lat'], $data['lng'])
-            //     : null,
         ]);
 
         $this->handleImages($request, $land);
 
-        return response()->json([
-            'message' => 'Land created successfully',
-            'land' => $this->mapPayload($land),
-        ], 201);
+        Cache::flush();
+
+        return $this->success(
+            $this->mapPayload($land),
+            'Land created successfully'
+        );
     }
 
     public function update(Request $request, $id)
@@ -94,9 +132,8 @@ class LandController extends Controller
         $this->authorizeAdmin();
 
         $land = Land::with('images')->find($id);
-
         if (! $land) {
-            return response()->json(['message' => 'Land not found'], 404);
+            return $this->error('Land not found', 404);
         }
 
         $data = $request->validate([
@@ -110,7 +147,7 @@ class LandController extends Controller
             'lat' => 'nullable|numeric|between:-90,90',
             'lng' => 'nullable|numeric|between:-180,180',
             'images' => 'nullable|array',
-            'images.*' => 'image|mimes:jpg,jpeg,png|max:2048',
+            'images.*' => 'image|max:2048',
             'remove_images' => 'nullable|array',
         ]);
 
@@ -118,28 +155,16 @@ class LandController extends Controller
             $sold = $land->total_units - $land->available_units;
 
             if ($data['total_units'] < $sold) {
-                return response()->json([
-                    'message' => "Total units cannot be less than sold units ({$sold})"
-                ], 422);
+                return $this->error(
+                    "Total units cannot be less than sold units ({$sold})",
+                    422
+                );
             }
 
             $data['available_units'] = $data['total_units'] - $sold;
         }
 
-        $updateData = collect($data)->except(['images', 'remove_images'])->toArray();
-
-        // keep lat/lng + spatial in sync
-        if (array_key_exists('lat', $data) && array_key_exists('lng', $data)) {
-            $updateData['lat'] = $data['lat'];
-            $updateData['lng'] = $data['lng'];
-
-            // $updateData['coordinates'] =
-            //     ($data['lat'] !== null && $data['lng'] !== null)
-            //         ? new Point($data['lat'], $data['lng'])
-            //         : null;
-        }
-
-        $land->update($updateData);
+        $land->update(collect($data)->except(['images', 'remove_images'])->toArray());
 
         if ($request->filled('remove_images')) {
             $this->removeImages($request->remove_images);
@@ -147,15 +172,18 @@ class LandController extends Controller
 
         $this->handleImages($request, $land);
 
-        return response()->json([
-            'message' => 'Land updated',
-            'land' => $this->mapPayload($land),
-        ]);
+        Cache::flush();
+
+        return $this->success(
+            $this->mapPayload($land),
+            'Land updated'
+        );
     }
 
-    public function disable($id)
+     public function disable($id)
     {
         $this->authorizeAdmin();
+
         Land::whereId($id)->update(['is_available' => false]);
 
         return response()->json(['message' => 'Land disabled']);
@@ -164,33 +192,40 @@ class LandController extends Controller
     public function enable($id)
     {
         $this->authorizeAdmin();
+
         Land::whereId($id)->update(['is_available' => true]);
 
         return response()->json(['message' => 'Land enabled']);
     }
 
+    /* =====================================================
+     | TRANSACTIONS
+     |===================================================== */
+
     public function buy(Request $request, $id)
     {
-        $request->validate(['units' => 'required|integer|min:1']);
+        $data = $request->validate([
+            'units' => 'required|integer|min:1'
+        ]);
+
         $user = $request->user();
 
-        DB::transaction(function () use ($request, $id, $user) {
+        DB::transaction(function () use ($data, $id, $user) {
+            $land = Land::lockForUpdate()->findOrFail($id);
 
-            $land = Land::lockForUpdate()->find($id);
-
-            if (! $land || ! $land->is_available) {
+            if (! $land->is_available) {
                 throw ValidationException::withMessages([
                     'land' => 'Land not available'
                 ]);
             }
 
-            if ($land->available_units < $request->units) {
+            if ($land->available_units < $data['units']) {
                 throw ValidationException::withMessages([
                     'units' => 'Insufficient units available'
                 ]);
             }
 
-            $amountKobo = $request->units * ($land->price_per_unit * 100);
+            $amountKobo = bcmul($data['units'], bcmul($land->price_per_unit, 100));
 
             if ($user->balance_kobo < $amountKobo) {
                 throw ValidationException::withMessages([
@@ -198,7 +233,15 @@ class LandController extends Controller
                 ]);
             }
 
-            $user->decrement('balance_kobo', $amountKobo);
+            $user->update([
+                'balance_kobo' => $user->balance_kobo - $amountKobo
+            ]);
+
+            $land->decrement('available_units', $data['units']);
+
+            if ($land->available_units === 0) {
+                $land->update(['is_available' => false]);
+            }
 
             LedgerEntry::create([
                 'uid' => $user->id,
@@ -208,43 +251,35 @@ class LandController extends Controller
                 'reference' => 'LAND-' . Str::uuid(),
             ]);
 
-            $land->decrement('available_units', $request->units);
-
-            if ($land->available_units === 0) {
-                $land->update(['is_available' => false]);
-            }
-
             UserLand::updateOrCreate(
                 ['user_id' => $user->id, 'land_id' => $land->id],
-                ['units' => DB::raw("units + {$request->units}")]
+                ['units' => DB::raw("units + {$data['units']}")]
             );
 
             Transaction::create([
                 'user_id' => $user->id,
                 'land_id' => $land->id,
-                'units' => $request->units,
-                'status' => 'completed',
+                'units' => $data['units'],
                 'type' => 'purchase',
+                'status' => 'completed',
                 'amount_kobo' => $amountKobo,
                 'reference' => 'TX-' . Str::uuid(),
                 'transaction_date' => now(),
             ]);
         });
 
-        return response()->json(['message' => 'Purchase successful']);
+        Cache::flush();
+
+        return $this->success(null, 'Purchase successful');
     }
 
-    /* 
-    |==========================================================
-    | HELPERS
-    |==========================================================
-    */
+    /* =====================================================
+     | HELPERS
+     |===================================================== */
 
     private function authorizeAdmin()
     {
-        if (! auth()->user()?->is_admin) {
-            abort(403, 'Unauthorized');
-        }
+        abort_if(! auth()->user()?->is_admin, 403, 'Unauthorized');
     }
 
     private function handleImages(Request $request, Land $land)
@@ -267,6 +302,18 @@ class LandController extends Controller
         }
     }
 
+    private function getMapColor(Land $land)
+    {
+        $soldRatio = ($land->total_units - $land->available_units) / max(1, $land->total_units);
+
+        return match (true) {
+            $soldRatio < 0.25 => 'green',
+            $soldRatio < 0.50 => 'yellow',
+            $soldRatio < 0.75 => 'orange',
+            default => 'red',
+        };
+    }
+
     private function mapPayload(Land $land)
     {
         return [
@@ -277,34 +324,36 @@ class LandController extends Controller
             'description' => $land->description,
             'price_per_unit' => $land->price_per_unit,
             'total_units' => $land->total_units,
-            'is_available' => (bool) $land->is_available,
             'available_units' => $land->available_units,
             'units_sold' => $land->total_units - $land->available_units,
             'sold_percentage' => $land->total_units
                 ? round((($land->total_units - $land->available_units) / $land->total_units) * 100, 2)
                 : 0,
-            'map_color' => match (true) {
-                ($land->total_units - $land->available_units) / max(1, $land->total_units) < 0.25 => 'green',
-                ($land->total_units - $land->available_units) / max(1, $land->total_units) < 0.50 => 'yellow',
-                ($land->total_units - $land->available_units) / max(1, $land->total_units) < 0.75 => 'orange',
-                default => 'red',
-            },
-
+            'map_color' => $this->getMapColor($land),
             'lat' => $land->lat,
             'lng' => $land->lng,
-
-            // // spatial
-            // 'coordinates' => $land->coordinates
-            //     ? [
-            //         'lat' => $land->coordinates->getLat(),
-            //         'lng' => $land->coordinates->getLng(),
-            //     ]
-            //     : null,
-
+            'is_available' => (bool) $land->is_available,
             'images' => $land->images->map(fn ($img) => [
                 'id' => $img->id,
                 'url' => Storage::url($img->image_path),
             ]),
         ];
+    }
+
+    private function success($data = null, $message = 'OK')
+    {
+        return response()->json([
+            'success' => true,
+            'message' => $message,
+            'data' => $data
+        ]);
+    }
+
+    private function error($message, $code = 400)
+    {
+        return response()->json([
+            'success' => false,
+            'message' => $message
+        ], $code);
     }
 }
