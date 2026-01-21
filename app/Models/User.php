@@ -96,6 +96,16 @@ class User extends Authenticatable implements JWTSubject
         return $this->hasMany(UserLand::class);
     }
 
+    public function portfolioSnapshots()
+    {
+        return $this->hasMany(PortfolioDailySnapshot::class);
+    }
+
+    public function portfolioLandSnapshots()
+    {
+        return $this->hasMany(PortfolioLandSnapshot::class);
+    }
+
     /* 
      | Wallet Logic 
     */

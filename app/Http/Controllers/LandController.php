@@ -325,6 +325,12 @@ class LandController extends Controller
             'sold_percentage' => $land->total_units
                 ? round((($land->total_units - $land->available_units) / $land->total_units) * 100, 2)
                 : 0,
+            'heat' => $land->total_units
+                ? round(
+                    ($land->total_units - $land->available_units) / $land->total_units,
+                    3
+                )
+                : 0,
             'map_color' => $this->getMapColor($land),
             'coordinates' => $land->coordinates_geojson,
             'lat' => $land->lat,

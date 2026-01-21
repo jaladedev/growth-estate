@@ -48,6 +48,16 @@ class Land extends Model
                     ->withTimestamps();
     }
 
+    public function priceHistory()
+    {
+        return $this->hasMany(LandPriceHistory::class);
+    }
+
+    public function portfolioSnapshots()
+    {
+        return $this->hasMany(PortfolioLandSnapshot::class);
+    }
+
     public function images()
     {
         return $this->hasMany(LandImage::class);

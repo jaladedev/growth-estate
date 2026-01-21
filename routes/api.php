@@ -128,6 +128,11 @@ Route::middleware('jwt.auth')->group(function () {
         Route::get('/user/stats', [UserController::class, 'getUserStats']);
         Route::get('/transactions/user', [UserController::class, 'getUserTransactions']);
 
+        Route::get('/portfolio/summary', [PortfolioController::class, 'summary']);
+        Route::get('/portfolio/chart', [PortfolioController::class, 'chart']);
+        Route::get('/portfolio/performance', [PortfolioController::class, 'performance']);
+        Route::get('/portfolio/allocation', [PortfolioController::class, 'allocation']);
+        Route::get('/portfolio/asset/{land}', [PortfolioController::class, 'asset']);
         /*
         |--------------------------------------------------------------------------
         | Transaction PIN
