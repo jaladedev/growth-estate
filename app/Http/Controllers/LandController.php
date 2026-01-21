@@ -24,10 +24,13 @@ class LandController extends Controller
             $query = Land::with('images')
                 ->where('is_available', true);
 
-            // Bounding box filter (map viewport)
             if ($request->filled(['north', 'south', 'east', 'west'])) {
-                $query->whereBetween('lat', [$request->south, $request->north])
-                      ->whereBetween('lng', [$request->west, $request->east]);
+                $query->withinBounds(
+                    $request->north,
+                    $request->south,
+                    $request->east,
+                    $request->west
+                );
             }
 
             return $this->success(
@@ -37,36 +40,46 @@ class LandController extends Controller
     }
 
     /**
-     * Lightweight map-only endpoint (markers)
+     * Lightweight map-only endpoint
      */
     public function mapIndex(Request $request)
     {
         $query = Land::query()
             ->where('is_available', true)
-            ->whereNotNull('lat')
-            ->whereNotNull('lng');
+            ->whereNotNull('coordinates');
 
         if ($request->filled(['north', 'south', 'east', 'west'])) {
-            $query->whereBetween('lat', [$request->south, $request->north])
-                  ->whereBetween('lng', [$request->west, $request->east]);
+            $query->withinBounds(
+                $request->north,
+                $request->south,
+                $request->east,
+                $request->west
+            );
         }
 
-        return $this->success(
-            $query->get()->map(fn ($land) => [
-                'id' => $land->id,
-                'title' => $land->title,
-                'lat' => $land->lat,
-                'lng' => $land->lng,
-                'price_per_unit' => $land->price_per_unit,
-                'available_units' => $land->available_units,
-                'map_color' => $this->getMapColor($land),
-            ])
-        );
+       return $this->success(
+        $query->get()->map(fn ($land) => [
+            'id' => $land->id,
+            'title' => $land->title,
+            'lat' => $land->lat,
+            'lng' => $land->lng,
+            'price_per_unit' => $land->price_per_unit,
+            'available_units' => $land->available_units,
+            'coordinates' => $land->coordinates_geojson,
+            'units_sold' => $land->total_units - $land->available_units,
+            'total_units' => $land->total_units,
+            'heat' => $land->total_units
+                ? round(
+                    ($land->total_units - $land->available_units) / $land->total_units,
+                    3
+                )
+                : 0,
+
+            'map_color' => $this->getMapColor($land),
+        ])
+    );
     }
 
-    /**
-     * Single land
-     */
     public function show($id)
     {
         $land = Land::with('images')->find($id);
@@ -78,9 +91,7 @@ class LandController extends Controller
         return $this->success($this->mapPayload($land));
     }
 
-    /* =====================================================
-     | ADMIN ENDPOINTS
-     |===================================================== */
+    /* ================= ADMIN ================= */
 
     public function adminIndex()
     {
@@ -118,13 +129,9 @@ class LandController extends Controller
         ]);
 
         $this->handleImages($request, $land);
-
         Cache::flush();
 
-        return $this->success(
-            $this->mapPayload($land),
-            'Land created successfully'
-        );
+        return $this->success($this->mapPayload($land), 'Land created successfully');
     }
 
     public function update(Request $request, $id)
@@ -155,10 +162,7 @@ class LandController extends Controller
             $sold = $land->total_units - $land->available_units;
 
             if ($data['total_units'] < $sold) {
-                return $this->error(
-                    "Total units cannot be less than sold units ({$sold})",
-                    422
-                );
+                return $this->error("Total units cannot be less than sold units ({$sold})", 422);
             }
 
             $data['available_units'] = $data['total_units'] - $sold;
@@ -171,16 +175,12 @@ class LandController extends Controller
         }
 
         $this->handleImages($request, $land);
-
         Cache::flush();
 
-        return $this->success(
-            $this->mapPayload($land),
-            'Land updated'
-        );
+        return $this->success($this->mapPayload($land), 'Land updated');
     }
 
-     public function disable($id)
+    public function disable($id)
     {
         $this->authorizeAdmin();
 
@@ -198,11 +198,7 @@ class LandController extends Controller
         return response()->json(['message' => 'Land enabled']);
     }
 
-    /* =====================================================
-     | TRANSACTIONS
-     |===================================================== */
-
-    public function buy(Request $request, $id)
+      public function buy(Request $request, $id)
     {
         $data = $request->validate([
             'units' => 'required|integer|min:1'
@@ -251,10 +247,11 @@ class LandController extends Controller
                 'reference' => 'LAND-' . Str::uuid(),
             ]);
 
-            UserLand::updateOrCreate(
+           UserLand::firstOrCreate(
                 ['user_id' => $user->id, 'land_id' => $land->id],
-                ['units' => DB::raw("units + {$data['units']}")]
-            );
+                ['units' => 0]
+            )->increment('units', $data['units']);
+
 
             Transaction::create([
                 'user_id' => $user->id,
@@ -273,9 +270,8 @@ class LandController extends Controller
         return $this->success(null, 'Purchase successful');
     }
 
-    /* =====================================================
-     | HELPERS
-     |===================================================== */
+
+    /* ================= HELPERS ================= */
 
     private function authorizeAdmin()
     {
@@ -330,6 +326,7 @@ class LandController extends Controller
                 ? round((($land->total_units - $land->available_units) / $land->total_units) * 100, 2)
                 : 0,
             'map_color' => $this->getMapColor($land),
+            'coordinates' => $land->coordinates_geojson,
             'lat' => $land->lat,
             'lng' => $land->lng,
             'is_available' => (bool) $land->is_available,

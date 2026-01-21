@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 class Land extends Model
 {
@@ -54,7 +56,8 @@ class Land extends Model
     protected $appends = [
         'units_sold',
         'sold_percentage',
-        'map_color'
+        'map_color',
+        'coordinates_geojson'
     ];
 
     public function getUnitsSoldAttribute()
@@ -76,5 +79,49 @@ class Land extends Model
             $this->sold_percentage < 75 => 'orange',
             default => 'red',
         };
+    }
+
+    public function getCoordinatesGeojsonAttribute()
+    {
+        return DB::table('lands')
+            ->where('id', $this->id)
+            ->selectRaw('ST_AsGeoJSON(coordinates) as geojson')
+            ->value('geojson');
+    }
+
+    /* Keep coordinates column in sync with lat/lng */
+   protected static function booted()
+        {
+        static::saving(function (Land $land) {
+        if (
+            $land->isDirty(['lat', 'lng']) &&
+            $land->lat !== null &&
+            $land->lng !== null
+        ) {
+            $land->coordinates = DB::raw("
+                ST_SetSRID(
+                    ST_MakePoint(
+                        {$land->lng}::double precision,
+                        {$land->lat}::double precision
+                    ),
+                    4326
+                )
+            ");
+        }
+    });
+
+    }
+
+    public function scopeWithinBounds(
+        Builder $query,
+        float $north,
+        float $south,
+        float $east,
+        float $west
+    ) {
+        return $query->whereRaw(
+            "coordinates && ST_MakeEnvelope(?, ?, ?, ?, 4326)",
+            [$west, $south, $east, $north]
+        );
     }
 }
