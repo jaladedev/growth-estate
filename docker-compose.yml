@@ -29,6 +29,26 @@ services:
     networks:
       - laravel
 
+  # Scheduler
+  scheduler:
+    build:
+      context: .
+    container_name: laravel_app_scheduler
+    working_dir: /var/www/html
+    volumes:
+      - .:/var/www/html
+    command: sh -c "while true; do php artisan schedule:run; sleep 60; done"
+    depends_on:
+      - app
+      - db
+    environment:
+      APP_ENV: local
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: growthpoles
+      DB_USERNAME: laravel
+      DB_PASSWORD: laravel
+
   # Postgres database
   db:
     image: postgis/postgis:16-3.4

@@ -63,7 +63,7 @@ class LandController extends Controller
             'title' => $land->title,
             'lat' => $land->lat,
             'lng' => $land->lng,
-            'price_per_unit' => $land->price_per_unit,
+            'price_per_unit_kobo' => $land->price_per_unit_kobo,
             'available_units' => $land->available_units,
             'coordinates' => $land->coordinates_geojson,
             'units_sold' => $land->total_units - $land->available_units,
@@ -112,7 +112,7 @@ class LandController extends Controller
             'title' => 'required|string|max:255',
             'location' => 'required|string|max:255',
             'size' => 'required|numeric',
-            'price_per_unit' => 'required|numeric|min:1',
+            'price_per_unit_kobo' => 'required|numeric|min:1',
             'total_units' => 'required|integer|min:1',
             'description' => 'nullable|string',
             'lat' => 'nullable|numeric|between:-90,90',
@@ -147,7 +147,7 @@ class LandController extends Controller
             'title' => 'sometimes|string|max:255',
             'location' => 'sometimes|string|max:255',
             'size' => 'sometimes|numeric',
-            'price_per_unit' => 'sometimes|numeric|min:1',
+            'price_per_unit_kobo' => 'sometimes|numeric|min:1',
             'total_units' => 'sometimes|integer|min:1',
             'description' => 'nullable|string',
             'is_available' => 'sometimes|boolean',
@@ -221,7 +221,7 @@ class LandController extends Controller
                 ]);
             }
 
-            $amountKobo = bcmul($data['units'], bcmul($land->price_per_unit, 100));
+            $amountKobo = bcmul($data['units'], bcmul($land->price_per_unit_kobo, 100));
 
             if ($user->balance_kobo < $amountKobo) {
                 throw ValidationException::withMessages([
@@ -318,7 +318,7 @@ class LandController extends Controller
             'location' => $land->location,
             'size' => $land->size,
             'description' => $land->description,
-            'price_per_unit' => $land->price_per_unit,
+            'price_per_unit_kobo' => $land->price_per_unit_kobo,
             'total_units' => $land->total_units,
             'available_units' => $land->available_units,
             'units_sold' => $land->total_units - $land->available_units,

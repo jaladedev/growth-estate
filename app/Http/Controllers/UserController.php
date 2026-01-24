@@ -61,14 +61,16 @@ class UserController extends Controller
 
         // Prepare response data
         $ownedLands = $purchases->map(function ($purchase) {
-            return [
-                'land_id' => $purchase->land->id,
-                'land_name' => $purchase->land->title,
-                'units_owned' => $purchase->units,
-                'price_per_unit' => $purchase->land->price_per_unit,
-                'current_value' => $purchase->units * $purchase->land->price_per_unit           ,
-            ];
-        });
+        $pricePerUnit = $purchase->land->price_per_unit_kobo;
+
+        return [
+            'land_id' => $purchase->land->id,
+            'land_name' => $purchase->land->title,
+            'units_owned' => $purchase->units,
+            'price_per_unit_kobo' => $pricePerUnit,
+            'current_value' => ($purchase->units * $pricePerUnit) / 100,
+        ];
+    });
 
         return response()->json(['owned_lands' => $ownedLands]);
     }

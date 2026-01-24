@@ -7,6 +7,7 @@ use App\Http\Controllers\PurchaseController;
 use App\Http\Controllers\DepositController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\WithdrawalController;
+use App\Http\Controllers\PortfolioController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PaystackWebhookController; 
 use App\Http\Controllers\MonnifyWebhookController;
