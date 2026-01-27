@@ -27,4 +27,12 @@ class LandPriceHistory extends Model
     {
         return $this->belongsTo(Land::class);
     }
+
+    public static function currentPrice(int $landId): self
+    {
+        return self::where('land_id', $landId)
+            ->where('price_date', '<=', now()->toDateString())
+            ->orderByDesc('price_date')
+            ->firstOrFail();
+    }
 }

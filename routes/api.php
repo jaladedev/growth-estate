@@ -121,6 +121,7 @@ Route::middleware('jwt.auth')->group(function () {
             Route::get('/', [LandController::class, 'index']);
             Route::get('/lands/map', [LandController::class, 'mapIndex']);
             Route::get('/{id}', [LandController::class, 'show']);
+            Route::post('/land/{land}/price', [LandController::class, 'updatePrice']);
         });
 
 

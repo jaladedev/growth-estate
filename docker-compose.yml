@@ -9,10 +9,11 @@ services:
     working_dir: /var/www/html
     volumes:
       - ./:/var/www/html
-    networks:
-      - laravel
     depends_on:
       - db
+      - redis
+    networks:
+      - laravel
 
   # Nginx webserver
   webserver:
@@ -29,18 +30,21 @@ services:
     networks:
       - laravel
 
-  # Scheduler
+  # Scheduler (artisan schedule:run)
   scheduler:
     build:
       context: .
-    container_name: laravel_app_scheduler
+      dockerfile: Dockerfile
+    container_name: laravel-scheduler
+    restart: unless-stopped
     working_dir: /var/www/html
     volumes:
-      - .:/var/www/html
+      - ./:/var/www/html
     command: sh -c "while true; do php artisan schedule:run; sleep 60; done"
     depends_on:
       - app
       - db
+      - redis
     environment:
       APP_ENV: local
       DB_HOST: db
@@ -48,6 +52,37 @@ services:
       DB_DATABASE: growthpoles
       DB_USERNAME: laravel
       DB_PASSWORD: laravel
+      CACHE_DRIVER: redis
+      QUEUE_CONNECTION: database
+    networks:
+      - laravel
+
+  # Queue worker
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: laravel-queue
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    command: php artisan queue:work --sleep=3 --tries=3
+    depends_on:
+      - app
+      - db
+      - redis
+    environment:
+      APP_ENV: local
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: growthpoles
+      DB_USERNAME: laravel
+      DB_PASSWORD: laravel
+      QUEUE_CONNECTION: database
+      CACHE_DRIVER: redis
+    networks:
+      - laravel
 
   # Postgres database
   db:
@@ -62,6 +97,16 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - laravel
+
+  # Redis (cache, locks, rate limiting)
+  redis:
+    image: redis:7
+    container_name: growth-estate-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
     networks:
       - laravel
 
@@ -80,44 +125,20 @@ services:
     networks:
       - laravel
 
-  # Queue worker
-  queue:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: laravel-queue
-    restart: unless-stopped
-    working_dir: /var/www/html
-    volumes:
-      - ./:/var/www/html
-    networks:
-      - laravel
-    depends_on:
-      - app
-      - db
-    command: sh -c "php artisan queue:work --sleep=3 --tries=3"
-    environment:
-      APP_ENV: local
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_DATABASE: growthpoles
-      DB_USERNAME: laravel
-      DB_PASSWORD: laravel
-      QUEUE_CONNECTION: database
-
   # MailHog
   mailhog:
     image: mailhog/mailhog
     container_name: mailhog
     restart: unless-stopped
     ports:
-      - "1025:1025"  # SMTP
-      - "8025:8025"  # Web UI
+      - "1025:1025"
+      - "8025:8025"
     networks:
       - laravel
 
 networks:
   laravel:
+    driver: bridge
 
 volumes:
   pgdata:
