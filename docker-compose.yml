@@ -1,9 +1,9 @@
 services:
-  # Laravel PHP-FPM
   app:
     build:
       context: .
       dockerfile: Dockerfile
+    image: growth-estate-app
     container_name: laravel-app
     restart: unless-stopped
     working_dir: /var/www/html
@@ -15,7 +15,7 @@ services:
     networks:
       - laravel
 
-  # Nginx webserver
+  # Nginx
   webserver:
     image: nginx:alpine
     container_name: nginx-server
@@ -30,61 +30,37 @@ services:
     networks:
       - laravel
 
-  # Scheduler (artisan schedule:run)
+  # Scheduler 
   scheduler:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: growth-estate-app
     container_name: laravel-scheduler
     restart: unless-stopped
     working_dir: /var/www/html
     volumes:
       - ./:/var/www/html
-    command: sh -c "while true; do php artisan schedule:run; sleep 60; done"
+    command: php artisan schedule:work
     depends_on:
-      - app
       - db
       - redis
-    environment:
-      APP_ENV: local
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_DATABASE: growthpoles
-      DB_USERNAME: laravel
-      DB_PASSWORD: laravel
-      CACHE_DRIVER: redis
-      QUEUE_CONNECTION: database
     networks:
       - laravel
 
-  # Queue worker
+  # Queue Worker 
   queue:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: growth-estate-app
     container_name: laravel-queue
     restart: unless-stopped
     working_dir: /var/www/html
     volumes:
       - ./:/var/www/html
-    command: php artisan queue:work --sleep=3 --tries=3
+    command: php artisan queue:work --sleep=3 --tries=3 --timeout=90
     depends_on:
-      - app
       - db
       - redis
-    environment:
-      APP_ENV: local
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_DATABASE: growthpoles
-      DB_USERNAME: laravel
-      DB_PASSWORD: laravel
-      QUEUE_CONNECTION: database
-      CACHE_DRIVER: redis
     networks:
       - laravel
 
-  # Postgres database
+  # PostgreSQL + PostGIS
   db:
     image: postgis/postgis:16-3.4
     container_name: postgres-db
@@ -100,13 +76,11 @@ services:
     networks:
       - laravel
 
-  # Redis (cache, locks, rate limiting)
+  # Redis
   redis:
-    image: redis:7
+    image: redis:7-alpine
     container_name: growth-estate-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
     networks:
       - laravel
 

@@ -1,21 +1,22 @@
-FROM php:8.3-fpm-bookworm
+FROM php:8.3-fpm
 
+# Set working directory
 WORKDIR /var/www/html
 
-# Install system dependencies
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        git \
-        curl \
-        zip \
-        unzip \
-        libpng-dev \
-        libonig-dev \
-        libxml2-dev \
-        libzip-dev \
-        libpq-dev \
-        supervisor \
+# Install only required system packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    zip \
+    unzip \
+    libpng-dev \
+    libonig-dev \
+    libxml2-dev \
+    libzip-dev \
+    libpq-dev \
+    supervisor \
     && docker-php-ext-install \
+        pdo \
         pdo_pgsql \
         mbstring \
         exif \
@@ -26,11 +27,14 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Composer globally
+# Install Composer globally (from official image)
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Set permissions 
-RUN chown -R www-data:www-data /var/www/html 
+# Set correct permissions
+RUN chown -R www-data:www-data /var/www/html
 
-# CMD for app container
+# Switch to non-root user (optional but cleaner)
+USER www-data
+
+# Start PHP-FPM
 CMD ["php-fpm"]
