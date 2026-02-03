@@ -1,9 +1,9 @@
 FROM php:8.3-fpm
 
-# Set working directory
 WORKDIR /var/www/html
+ENV HOME=/var/www/html
 
-# Install only required system packages
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
@@ -15,26 +15,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libzip-dev \
     libpq-dev \
     supervisor \
-    && docker-php-ext-install \
-        pdo \
-        pdo_pgsql \
-        mbstring \
-        exif \
-        pcntl \
-        bcmath \
-        gd \
-        zip \
+    && docker-php-ext-install pdo pdo_pgsql mbstring exif pcntl bcmath gd zip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Composer globally (from official image)
+# Install Composer (optional, but fine to keep)
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Set correct permissions
-RUN chown -R www-data:www-data /var/www/html
+# Copy entire project INCLUDING vendor
+COPY . .
 
-# Switch to non-root user (optional but cleaner)
+# Fix permissions
+RUN chown -R www-data:www-data /var/www/html \
+    && chmod -R 775 storage bootstrap/cache
+
 USER www-data
 
-# Start PHP-FPM
 CMD ["php-fpm"]

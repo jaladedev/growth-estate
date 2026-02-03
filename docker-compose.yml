@@ -7,6 +7,8 @@ services:
     container_name: laravel-app
     restart: unless-stopped
     working_dir: /var/www/html
+    environment:
+      HOME: /var/www/html
     volumes:
       - ./:/var/www/html
     depends_on:
@@ -14,8 +16,7 @@ services:
       - redis
     networks:
       - laravel
-
-  # Nginx
+  
   webserver:
     image: nginx:alpine
     container_name: nginx-server
@@ -30,12 +31,13 @@ services:
     networks:
       - laravel
 
-  # Scheduler 
   scheduler:
     image: growth-estate-app
     container_name: laravel-scheduler
     restart: unless-stopped
     working_dir: /var/www/html
+    environment:
+      HOME: /var/www/html
     volumes:
       - ./:/var/www/html
     command: php artisan schedule:work
@@ -45,12 +47,13 @@ services:
     networks:
       - laravel
 
-  # Queue Worker 
   queue:
     image: growth-estate-app
     container_name: laravel-queue
     restart: unless-stopped
     working_dir: /var/www/html
+    environment:
+      HOME: /var/www/html
     volumes:
       - ./:/var/www/html
     command: php artisan queue:work --sleep=3 --tries=3 --timeout=90
@@ -60,7 +63,6 @@ services:
     networks:
       - laravel
 
-  # PostgreSQL + PostGIS
   db:
     image: postgis/postgis:16-3.4
     container_name: postgres-db
@@ -76,7 +78,6 @@ services:
     networks:
       - laravel
 
-  # Redis
   redis:
     image: redis:7-alpine
     container_name: growth-estate-redis
@@ -84,7 +85,6 @@ services:
     networks:
       - laravel
 
-  # pgAdmin
   pgadmin:
     image: dpage/pgadmin4
     container_name: pgadmin
@@ -99,7 +99,6 @@ services:
     networks:
       - laravel
 
-  # MailHog
   mailhog:
     image: mailhog/mailhog
     container_name: mailhog
