@@ -12,7 +12,7 @@ class Land extends Model
     use HasFactory;
 
     protected $fillable = [
-        'title', 'location', 'size', 'price_per_unit', 'total_units',
+        'title', 'location', 'size', 'total_units',
         'available_units', 'is_available', 'description', 'coordinates',
         'lat', 'lng'
     ];
@@ -24,11 +24,18 @@ class Land extends Model
     ];
 
     protected $casts = [
-        'size' => 'float',
-        'price_per_unit' => 'decimal:2',
+        'size' => 'float',  
         'total_units' => 'integer',
         'available_units' => 'integer',
         'is_available' => 'boolean',
+    ];
+
+    protected $appends = [
+        'units_sold',
+        'sold_percentage',
+        'map_color',
+        'coordinates_geojson',
+        'current_price_per_unit_kobo',
     ];
 
     public function transactions()
@@ -53,6 +60,12 @@ class Land extends Model
         return $this->hasMany(LandPriceHistory::class);
     }
 
+    public function latestPrice()
+    {
+        return $this->hasOne(LandPriceHistory::class)->latestOfMany('price_date');
+    }
+
+
     public function portfolioSnapshots()
     {
         return $this->hasMany(PortfolioLandSnapshot::class);
@@ -63,12 +76,12 @@ class Land extends Model
         return $this->hasMany(LandImage::class);
     }
 
-    protected $appends = [
-        'units_sold',
-        'sold_percentage',
-        'map_color',
-        'coordinates_geojson'
-    ];
+    public function getCurrentPricePerUnitKoboAttribute()
+    {
+        return $this->priceHistory()
+            ->orderByDesc('price_date')
+            ->value('price_per_unit_kobo');
+    }
 
     public function getUnitsSoldAttribute()
     {
