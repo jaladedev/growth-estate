@@ -19,7 +19,9 @@ class GenerateDailyPortfolioSnapshot implements ShouldQueue
 
         DB::transaction(function () use ($snapshotDate) {
 
-            // Prevent duplicate runs (idempotency)
+            // ==============================
+            // Prevent duplicate runs
+            // ==============================
             $exists = DB::table('portfolio_daily_snapshots')
                 ->where('snapshot_date', $snapshotDate)
                 ->exists();
@@ -28,56 +30,76 @@ class GenerateDailyPortfolioSnapshot implements ShouldQueue
                 return;
             }
 
-            // Get latest price per land (PGSQL optimized)
-            $prices = DB::table('land_price_history as lph')
-                ->join(DB::raw('(
+            // ==============================
+            // Get latest price per land
+            // (as of snapshot date)
+            // ==============================
+            $prices = collect(DB::select("
+                SELECT lph.land_id, lph.price_per_unit_kobo
+                FROM land_price_history lph
+                JOIN (
                     SELECT land_id, MAX(price_date) AS price_date
                     FROM land_price_history
-                    WHERE price_date <= CURRENT_DATE
+                    WHERE price_date <= ?
                     GROUP BY land_id
-                ) latest'), function ($join) {
-                    $join->on('lph.land_id', '=', 'latest.land_id')
-                         ->on('lph.price_date', '=', 'latest.price_date');
-                })
-                ->select('lph.land_id', 'lph.price_per_unit_kobo')
-                ->get()
-                ->keyBy('land_id');
+                ) latest
+                ON lph.land_id = latest.land_id
+                AND lph.price_date = latest.price_date
+            ", [$snapshotDate]))->keyBy('land_id');
 
-            // Aggregate user holdings
+            if ($prices->isEmpty()) {
+                return;
+            }
+
+            // ==============================
+            // Get user holdings
+            // ==============================
             $holdings = DB::table('user_land')
                 ->select('user_id', 'land_id', 'units')
                 ->get();
 
+            if ($holdings->isEmpty()) {
+                return;
+            }
+
+            $assetRows = [];
             $userTotals = [];
 
             foreach ($holdings as $row) {
+
                 if (!isset($prices[$row->land_id])) {
                     continue;
                 }
 
                 $value = $row->units * $prices[$row->land_id]->price_per_unit_kobo;
 
-                // Per-asset snapshot (optional but powerful)
-                DB::table('portfolio_asset_snapshots')->insert([
+                // Build asset snapshot rows (bulk insert later)
+                $assetRows[] = [
                     'user_id' => $row->user_id,
                     'land_id' => $row->land_id,
                     'snapshot_date' => $snapshotDate,
                     'units' => $row->units,
                     'value_kobo' => $value,
                     'created_at' => now(),
-                ]);
+                ];
 
                 if (!isset($userTotals[$row->user_id])) {
-                    $userTotals[$row->user_id] = [
-                        'total_value' => 0,
-                        'total_invested' => 0,
-                    ];
+                    $userTotals[$row->user_id] = 0;
                 }
 
-                $userTotals[$row->user_id]['total_value'] += $value;
+                $userTotals[$row->user_id] += $value;
             }
 
+            // ==============================
+            // Bulk insert asset snapshots
+            // ==============================
+            if (!empty($assetRows)) {
+                DB::table('portfolio_asset_snapshots')->insert($assetRows);
+            }
+
+            // ==============================
             // Get invested amount per user
+            // ==============================
             $invested = DB::table('purchases')
                 ->select(
                     'user_id',
@@ -87,18 +109,30 @@ class GenerateDailyPortfolioSnapshot implements ShouldQueue
                 ->get()
                 ->keyBy('user_id');
 
-            // Insert user snapshots
-            foreach ($userTotals as $userId => $totals) {
+            // ==============================
+            // Build daily snapshot rows
+            // ==============================
+            $dailyRows = [];
+
+            foreach ($userTotals as $userId => $totalValue) {
+
                 $investedAmount = $invested[$userId]->invested ?? 0;
 
-                DB::table('portfolio_daily_snapshots')->insert([
+                $dailyRows[] = [
                     'user_id' => $userId,
                     'snapshot_date' => $snapshotDate,
                     'total_invested_kobo' => $investedAmount,
-                    'total_value_kobo' => $totals['total_value'],
-                    'total_profit_kobo' => $totals['total_value'] - $investedAmount,
+                    'total_value_kobo' => $totalValue,
+                    'total_profit_kobo' => $totalValue - $investedAmount,
                     'created_at' => now(),
-                ]);
+                ];
+            }
+
+            // ==============================
+            // Bulk insert daily snapshots
+            // ==============================
+            if (!empty($dailyRows)) {
+                DB::table('portfolio_daily_snapshots')->insert($dailyRows);
             }
         });
     }

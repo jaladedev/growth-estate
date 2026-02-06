@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Cache;
 use App\Models\Deposit;
 use App\Models\Withdrawal;
 use App\Models\Transaction;
+use App\Models\LandPriceHistory;
 use App\Mail\TransactionPinResetMail;
 use App\Models\User;
 use Illuminate\Support\Facades\Mail;
@@ -46,7 +47,7 @@ class UserController extends Controller
     }
 
     // Retrieve all lands and units owned by the user
-    public function getAllUserLands(Request $request)
+   public function getAllUserLands(Request $request)
     {
         try {
             $user = JWTAuth::parseToken()->authenticate();
@@ -54,26 +55,26 @@ class UserController extends Controller
             return response()->json(['error' => 'User not authenticated'], 401);
         }
 
-        // Fetch all lands and units the user owns from purchases
         $purchases = Purchase::with('land')
-                             ->where('user_id', $user->id)
-                             ->get();
+            ->where('user_id', $user->id)
+            ->get();
 
-        // Prepare response data
         $ownedLands = $purchases->map(function ($purchase) {
-        $pricePerUnit = $purchase->land->price_per_unit_kobo;
+            $currentPrice = LandPriceHistory::currentPrice($purchase->land->id);
+            $pricePerUnit = $currentPrice->price_per_unit_kobo;
 
-        return [
-            'land_id' => $purchase->land->id,
-            'land_name' => $purchase->land->title,
-            'units_owned' => $purchase->units,
-            'price_per_unit_kobo' => $pricePerUnit,
-            'current_value' => ($purchase->units * $pricePerUnit) / 100,
-        ];
-    });
+            return [
+                'land_id' => $purchase->land->id,
+                'land_name' => $purchase->land->title,
+                'units_owned' => $purchase->units,
+                'price_per_unit_kobo' => $pricePerUnit,
+                'current_value' => ($purchase->units * $pricePerUnit) / 100,
+            ];
+        });
 
         return response()->json(['owned_lands' => $ownedLands]);
     }
+
     
     public function setTransactionPin(Request $request)
     {

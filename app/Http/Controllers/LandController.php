@@ -152,7 +152,7 @@ class LandController extends Controller
         }
 
         $land->update(collect($data)->except('price_per_unit_kobo')->toArray());
-        
+
         $this->handleImages($request, $land);
         $this->refreshLandCache($land);
         Cache::tags(['lands:list','maps','admin:lands'])->flush();
@@ -160,79 +160,40 @@ class LandController extends Controller
         return $this->success($this->getCachedLand($land->id), 'Land updated');
     }
 
-    public function buy(Request $request, $id)
+   public function updatePrice(Request $request, Land $land)
     {
-        $request->validate(['units' => 'required|integer|min:1']);
-        $user = $request->user();
+        $this->authorizeAdmin();
 
-        DB::transaction(function () use ($request, $user, $id, &$land) {
-            // Lock the land row to prevent race conditions
-            $land = Land::lockForUpdate()->findOrFail($id);
+        $data = $request->validate([
+            'price_per_unit_kobo' => 'required|integer|min:1',
+            'price_date' => 'required|date',
+        ]);
 
-            if ($land->available_units < $request->units) {
-                throw ValidationException::withMessages(['units' => 'Insufficient units available']);
-            }
+        DB::transaction(function () use ($land, $data) {
 
-            $amount = $land->current_price_per_unit_kobo * $request->units;
-
-            if ($user->balance_kobo < $amount) {
-                throw ValidationException::withMessages(['wallet' => 'Insufficient balance']);
-            }
-
-            // Deduct user balance and decrease available units
-            $user->decrement('balance_kobo', $amount);
-            $land->decrement('available_units', $request->units);
-
-            // Update or create user's land units
-            UserLand::firstOrCreate(
-                ['user_id' => $user->id, 'land_id' => $land->id],
-                ['units' => 0]
-            )->increment('units', $request->units);
-
-            // Create transaction record
-            Transaction::create([
-                'user_id' => $user->id,
+            LandPriceHistory::create([
                 'land_id' => $land->id,
-                'units' => $request->units,
-                'amount_kobo' => $amount,
-                'status' => 'completed',
-                'type' => 'purchase',
-                'reference' => 'TX-' . Str::uuid(),
-                'transaction_date' => now(),
+                'price_per_unit_kobo' => $data['price_per_unit_kobo'],
+                'price_date' => $data['price_date'],
             ]);
 
-            // Ledger entry
-            LedgerEntry::create([
-                'uid' => $user->id,
-                'type' => 'purchase',
-                'amount_kobo' => $amount,
-                'balance_after' => $user->balance_kobo,
-                'reference' => 'LAND-' . Str::uuid(),
-            ]);
-
-            // Trigger event for listeners
-            event(new LandUnitsPurchased($user->id, $land->id, $request->units, $land->current_price_per_unit_kobo, $amount));
-
-            //  Refresh cache AFTER commit
-            DB::afterCommit(function () use ($land) {
-                // Refresh land instance
-                $land->refresh();
-
-                // Forget individual land caches
-                Cache::tags(['lands:item'])->forget("land:{$land->id}:full");
-                Cache::tags(['lands:item'])->forget("land:{$land->id}:map");
-
-                // Flush list/map caches
-                Cache::tags(['lands:list','maps','admin:lands'])->flush();
-
-                // Optional: Preload fresh cache to avoid first-hit delay
-                app()->call(fn() => (new self)->getCachedLand($land->id));
-                app()->call(fn() => (new self)->getCachedLand($land->id, true));
-            });
+            event(new LandPriceChanged(
+                $land->id,
+                $data['price_per_unit_kobo'],
+                $data['price_date']
+            ));
         });
 
-        return $this->success(null, 'Purchase successful');
+        $this->refreshLandCache($land);
+
+        Cache::tags(['lands:list', 'maps', 'admin:lands'])->flush();
+
+        return $this->success(
+            $this->getCachedLand($land->id),
+            'Price updated'
+        );
     }
+
 
     /* ================= HELPERS ================= */
 

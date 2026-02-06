@@ -98,7 +98,10 @@ Route::middleware('jwt.auth')->group(function () {
                 ->middleware(AdminMiddleware::class);
 
             Route::patch('/admin/{id}/enable', [LandController::class, 'enable'])
-                ->middleware(AdminMiddleware::class);
+               ->middleware(AdminMiddleware::class); 
+
+            Route::patch('/admin/{land}/price', [LandController::class, 'updatePrice'])
+               ->middleware(AdminMiddleware::class);
 
             /*
             |--------------------------------------------------------------------------
@@ -121,7 +124,6 @@ Route::middleware('jwt.auth')->group(function () {
             Route::get('/', [LandController::class, 'index']);
             Route::get('/lands/map', [LandController::class, 'mapIndex']);
             Route::get('/{id}', [LandController::class, 'show']);
-            Route::post('/land/{land}/price', [LandController::class, 'updatePrice']);
         });
 
 
