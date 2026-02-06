@@ -19,7 +19,7 @@ class CheckTransactionPin
             return response()->json([
                 'success' => false,
                 'message' => 'Transaction PIN not set. Please create a PIN first.',
-            ], 403);
+            ], 400);
         }
 
         $pin = $request->input('transaction_pin');

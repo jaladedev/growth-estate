@@ -5,98 +5,123 @@ namespace App\Http\Controllers;
 use App\Models\Land;
 use App\Models\Transaction;
 use App\Models\Purchase;
-use App\Notifications\PurchaseConfirmed;
-use App\Notifications\SaleConfirmed;
+use App\Models\UserLand;
+use App\Models\LedgerEntry;
+use App\Events\LandUnitsPurchased;
+use App\Events\LandUnitsSold;
 use Illuminate\Http\Request;
-use Tymon\JWTAuth\Facades\JWTAuth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 class PurchaseController extends Controller
 {
     /**
-     * PURCHASE LAND UNITS
+     * BUY LAND UNITS
      */
     public function purchase(Request $request, $landId)
     {
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            'units' => 'required|integer|min:1',
+            'units' => ['required', 'integer', 'min:1'],
         ]);
 
         try {
             return DB::transaction(function () use ($request, $landId, $user) {
 
-                // Lock land row to prevent overselling
+                /** Lock land */
                 $land = Land::lockForUpdate()->findOrFail($landId);
 
                 if (! $land->is_available || $land->available_units < $request->units) {
-                    return response()->json([
-                        'message' => 'Not enough units available'
-                    ], 422);
+                    throw ValidationException::withMessages([
+                        'units' => 'Insufficient units available',
+                    ]);
                 }
 
-                // Convert price to kobo
-                $pricePerUnitKobo = $land->price_per_unit * 100;
-                $totalCostKobo = $pricePerUnitKobo * $request->units;
+                /** Pricing (kobo) */
+                $pricePerUnit = $land->current_price_per_unit_kobo;
+                $totalCost = $pricePerUnit * $request->units;
 
-                // Check wallet balance
-                if ($user->balance_kobo < $totalCostKobo) {
-                    return response()->json([
-                        'message' => 'Insufficient balance'
-                    ], 422);
+                if ($user->balance_kobo < $totalCost) {
+                    throw ValidationException::withMessages([
+                        'wallet' => 'Insufficient wallet balance',
+                    ]);
                 }
 
-                $referenceCode = 'PUR-' . now()->format('Ymd-His') . '-' . Str::random(6);
+                $reference = 'PUR-' . Str::uuid();
 
-                // Deduct wallet
-                $user->decrement('balance_kobo', $totalCostKobo);
+                /** Wallet debit */
+                $user->decrement('balance_kobo', $totalCost);
 
-                // Deduct land units
+                LedgerEntry::create([
+                    'uid' => $user->id,
+                    'type' => 'withdrawal',
+                    'amount_kobo' => $totalCost,
+                    'balance_after' => $user->balance_kobo,
+                    'reference' => $reference,
+                ]);
+
+                /** Update land */
                 $land->decrement('available_units', $request->units);
                 $land->is_available = $land->available_units > 0;
                 $land->save();
 
-                // Transaction record
-                $transaction = Transaction::create([
-                    'land_id'     => $land->id,
-                    'user_id'     => $user->id,
-                    'type'        => 'purchase',
-                    'units'       => $request->units,
-                    'amount_kobo' => $totalCostKobo,
-                    'status'      => 'completed',
-                    'reference'   => $referenceCode,
-                    'message'     => 'Land units purchased successfully',
-                ]);
-
-                // Purchase summary
-                $purchase = Purchase::firstOrCreate(
+                /** Purchase summary */
+                $purchase = Purchase::lockForUpdate()->firstOrCreate(
                     ['user_id' => $user->id, 'land_id' => $land->id],
                     [
                         'units' => 0,
+                        'units_sold' => 0,
                         'total_amount_paid_kobo' => 0,
+                        'total_amount_received_kobo' => 0,
+                        'status' => 'active',
                         'purchase_date' => now(),
                     ]
                 );
 
                 $purchase->increment('units', $request->units);
-                $purchase->increment('total_amount_paid_kobo', $totalCostKobo);
+                $purchase->increment('total_amount_paid_kobo', $totalCost);
+                $purchase->reference = $reference;
                 $purchase->purchase_date = now();
-                $purchase->reference = $referenceCode;
                 $purchase->save();
 
-                // Notify user
-                $user->notify(new PurchaseConfirmed($transaction));
+                /** Portfolio (source of truth) */
+                UserLand::firstOrCreate(
+                    ['user_id' => $user->id, 'land_id' => $land->id],
+                    ['units' => 0]
+                )->increment('units', $request->units);
+
+                /** Transaction log */
+                Transaction::create([
+                    'user_id' => $user->id,
+                    'land_id' => $land->id,
+                    'type' => 'purchase',
+                    'units' => $request->units,
+                    'amount_kobo' => $totalCost,
+                    'status' => 'completed',
+                    'reference' => $reference,
+                    'transaction_date' => now(),
+                ]);
+
+                /** Event (fires AFTER commit automatically) */
+                event(new LandUnitsPurchased(
+                    $user->id,
+                    $land->id,
+                    $request->units,
+                    $pricePerUnit,
+                    $totalCost
+                ));
 
                 return response()->json([
                     'message' => 'Purchase successful',
-                    'reference' => $referenceCode,
-                    'amount_paid_kobo' => $totalCostKobo,
+                    'reference' => $reference,
+                    'amount_paid_kobo' => $totalCost,
+                    'remaining_units' => $land->available_units,
                 ]);
             });
-
         } catch (\Throwable $e) {
             Log::error('Purchase failed', [
                 'error' => $e->getMessage(),
@@ -104,9 +129,7 @@ class PurchaseController extends Controller
                 'land_id' => $landId,
             ]);
 
-            return response()->json([
-                'message' => 'Transaction failed'
-            ], 500);
+            throw $e;
         }
     }
 
@@ -118,7 +141,7 @@ class PurchaseController extends Controller
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            'units' => 'required|integer|min:1',
+            'units' => ['required', 'integer', 'min:1'],
         ]);
 
         try {
@@ -130,56 +153,76 @@ class PurchaseController extends Controller
                     ->firstOrFail();
 
                 if ($purchase->units < $request->units) {
-                    return response()->json([
-                        'message' => 'Not enough units to sell'
-                    ], 422);
+                    throw ValidationException::withMessages([
+                        'units' => 'Not enough units to sell',
+                    ]);
                 }
 
                 $land = Land::lockForUpdate()->findOrFail($landId);
 
-                // Convert price to kobo
-                $pricePerUnitKobo = $land->price_per_unit * 100;
-                $totalReceivedKobo = $pricePerUnitKobo * $request->units;
+                $pricePerUnit = $land->current_price_per_unit_kobo;
+                $totalReceived = $pricePerUnit * $request->units;
 
-                $referenceCode = 'SALE-' . now()->format('Ymd-His') . '-' . Str::random(6);
+                $reference = 'SALE-' . Str::uuid();
 
-                // Update purchase record
+                /** Update purchase */
                 $purchase->decrement('units', $request->units);
                 $purchase->increment('units_sold', $request->units);
-                $purchase->increment('total_amount_received_kobo', $totalReceivedKobo);
+                $purchase->increment('total_amount_received_kobo', $totalReceived);
                 $purchase->sell_date = now();
+                $purchase->status = $purchase->units === 0 ? 'sold_out' : 'partially_sold';
+                $purchase->reference = $reference;
                 $purchase->save();
 
-                // Restore land units
+                /** Restore land */
                 $land->increment('available_units', $request->units);
                 $land->is_available = true;
                 $land->save();
 
-                // Credit wallet
-                $user->increment('balance_kobo', $totalReceivedKobo);
+                /** Wallet credit */
+                $user->increment('balance_kobo', $totalReceived);
 
-                // Transaction record
-                $transaction = Transaction::create([
-                    'land_id'     => $land->id,
-                    'user_id'     => $user->id,
-                    'type'        => 'sale',
-                    'units'       => $request->units,
-                    'amount_kobo' => $totalReceivedKobo,
-                    'status'      => 'completed',
-                    'reference'   => $referenceCode,
-                    'message'     => 'Land units sold successfully',
+                LedgerEntry::create([
+                    'uid' => $user->id,
+                    'type' => 'deposit',
+                    'amount_kobo' => $totalReceived,
+                    'balance_after' => $user->balance_kobo,
+                    'reference' => $reference,
                 ]);
 
-                // Notify user
-                $user->notify(new SaleConfirmed($transaction));
+                /** Portfolio */
+                UserLand::where('user_id', $user->id)
+                    ->where('land_id', $land->id)
+                    ->decrement('units', $request->units);
+
+                /** Transaction log */
+                Transaction::create([
+                    'user_id' => $user->id,
+                    'land_id' => $land->id,
+                    'type' => 'sale',
+                    'units' => $request->units,
+                    'amount_kobo' => $totalReceived,
+                    'status' => 'completed',
+                    'reference' => $reference,
+                    'transaction_date' => now(),
+                ]);
+
+                /** Event */
+                event(new LandUnitsSold(
+                    $user->id,
+                    $land->id,
+                    $request->units,
+                    $pricePerUnit,
+                    $totalReceived
+                ));
 
                 return response()->json([
                     'message' => 'Units sold successfully',
-                    'reference' => $referenceCode,
-                    'amount_received_kobo' => $totalReceivedKobo,
+                    'reference' => $reference,
+                    'amount_received_kobo' => $totalReceived,
+                    'available_units' => $land->available_units,
                 ]);
             });
-
         } catch (\Throwable $e) {
             Log::error('Sale failed', [
                 'error' => $e->getMessage(),
@@ -187,9 +230,7 @@ class PurchaseController extends Controller
                 'land_id' => $landId,
             ]);
 
-            return response()->json([
-                'message' => 'Sale transaction failed'
-            ], 500);
+            throw $e;
         }
     }
 }

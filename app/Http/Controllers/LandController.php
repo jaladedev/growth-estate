@@ -28,16 +28,13 @@ class LandController extends Controller
 
         $landIds = Cache::tags(['lands:list'])->remember($cacheKey, now()->addMinutes(5), function () use ($request) {
             $query = Land::where('is_available', true);
-
             if ($request->filled(['north','south','east','west'])) {
-                $query->withinBounds($request->north,$request->south,$request->east,$request->west);
+                $query->withinBounds($request->north, $request->south, $request->east, $request->west);
             }
-
             return $query->pluck('id')->toArray();
         });
 
         $lands = collect($landIds)->map(fn($id) => $this->getCachedLand($id));
-
         return $this->success($lands);
     }
 
@@ -48,20 +45,17 @@ class LandController extends Controller
 
         $landIds = Cache::tags(['maps'])->remember($cacheKey, now()->addMinutes(5), function () use ($request) {
             $query = Land::where('is_available', true)->whereNotNull('coordinates');
-
             if ($request->filled(['north','south','east','west'])) {
-                $query->withinBounds($request->north,$request->south,$request->east,$request->west);
+                $query->withinBounds($request->north, $request->south, $request->east, $request->west);
             }
-
             return $query->pluck('id')->toArray();
         });
 
         $lands = collect($landIds)->map(fn($id) => $this->getCachedLand($id, true));
-
         return $this->success($lands);
     }
 
-     public function show($id)
+    public function show($id)
     {
         return $this->success($this->getCachedLand($id));
     }
@@ -77,7 +71,6 @@ class LandController extends Controller
         });
 
         $lands = collect($landIds)->map(fn($id) => $this->getCachedLand($id));
-
         return $this->success($lands);
     }
 
@@ -86,42 +79,42 @@ class LandController extends Controller
         $this->authorizeAdmin();
 
         $data = $request->validate([
-            'title'=>'required|string',
-            'location'=>'required|string',
-            'size'=>'required|numeric',
-            'total_units'=>'required|integer|min:1',
-            'price_per_unit_kobo'=>'required|integer|min:1',
-            'description'=>'nullable|string',
-            'lat'=>'nullable|numeric',
-            'lng'=>'nullable|numeric',
-            'images'=>'nullable|array',
-            'images.*'=>'image|max:2048',
+            'title' => 'required|string',
+            'location' => 'required|string',
+            'size' => 'required|numeric',
+            'total_units' => 'required|integer|min:1',
+            'price_per_unit_kobo' => 'required|integer|min:1',
+            'description' => 'nullable|string',
+            'lat' => 'nullable|numeric',
+            'lng' => 'nullable|numeric',
+            'images' => 'nullable|array',
+            'images.*' => 'image|max:2048',
         ]);
-            
+
         DB::transaction(function () use ($data, &$land) {
             $land = Land::create([
-                'title'=>$data['title'],
-                'location'=>$data['location'],
-                'size'=>$data['size'],
-                'total_units'=>$data['total_units'],
-                'available_units'=>$data['total_units'],
-                'description'=>$data['description'] ?? null,
-                'lat'=>$data['lat'] ?? null,
-                'lng'=>$data['lng'] ?? null,
-                'is_available'=>true,
+                'title' => $data['title'],
+                'location' => $data['location'],
+                'size' => $data['size'],
+                'total_units' => $data['total_units'],
+                'available_units' => $data['total_units'],
+                'description' => $data['description'] ?? null,
+                'lat' => $data['lat'] ?? null,
+                'lng' => $data['lng'] ?? null,
+                'is_available' => true,
             ]);
 
             LandPriceHistory::create([
-                'land_id'=>$land->id,
-                'price_per_unit_kobo'=>$data['price_per_unit_kobo'],
-                'price_date'=>now()->toDateString(),
+                'land_id' => $land->id,
+                'price_per_unit_kobo' => $data['price_per_unit_kobo'],
+                'price_date' => now()->toDateString(),
             ]);
         });
+        $this->handleImages($request, $land);
+        $this->refreshLandCache($land);
+        Cache::tags(['lands:list', 'maps', 'admin:lands'])->flush();
 
-        $this->cacheLand($land);
-        Cache::tags(['lands:list','maps','admin:lands'])->flush();
-
-        return $this->success($this->getCachedLand($land->id),'Land created');
+        return $this->success($this->getCachedLand($land->id), 'Land created');
     }
 
     public function update(Request $request, $id)
@@ -131,15 +124,15 @@ class LandController extends Controller
         $land = Land::findOrFail($id);
 
         $data = $request->validate([
-            'title'=>'sometimes|string',
-            'location'=>'sometimes|string',
-            'size'=>'sometimes|numeric',
-            'total_units'=>'sometimes|integer|min:1',
-            'price_per_unit_kobo'=>'sometimes|integer|min:1',
-            'description'=>'nullable|string',
-            'is_available'=>'sometimes|boolean',
-            'lat'=>'nullable|numeric',
-            'lng'=>'nullable|numeric',
+            'title' => 'sometimes|string',
+            'location' => 'sometimes|string',
+            'size' => 'sometimes|numeric',
+            'total_units' => 'sometimes|integer|min:1',
+            'price_per_unit_kobo' => 'sometimes|integer|min:1',
+            'description' => 'nullable|string',
+            'is_available' => 'sometimes|boolean',
+            'lat' => 'nullable|numeric',
+            'lng' => 'nullable|numeric',
         ]);
 
         if (isset($data['total_units'])) {
@@ -150,147 +143,145 @@ class LandController extends Controller
 
         if (isset($data['price_per_unit_kobo'])) {
             LandPriceHistory::create([
-                'land_id'=>$land->id,
-                'price_per_unit_kobo'=>$data['price_per_unit_kobo'],
-                'price_date'=>now()->toDateString(),
+                'land_id' => $land->id,
+                'price_per_unit_kobo' => $data['price_per_unit_kobo'],
+                'price_date' => now()->toDateString(),
             ]);
 
-            event(new LandPriceChanged(
-                $land->id,
-                $data['price_per_unit_kobo'],
-                now()->toDateString()
-            ));
+            event(new LandPriceChanged($land->id, $data['price_per_unit_kobo'], now()->toDateString()));
         }
 
         $land->update(collect($data)->except('price_per_unit_kobo')->toArray());
-
-        $this->cacheLand($land);
+        
+        $this->handleImages($request, $land);
+        $this->refreshLandCache($land);
         Cache::tags(['lands:list','maps','admin:lands'])->flush();
 
-        return $this->success($this->getCachedLand($land->id),'Land updated');
+        return $this->success($this->getCachedLand($land->id), 'Land updated');
     }
 
     public function buy(Request $request, $id)
     {
-        $request->validate(['units'=>'required|integer|min:1']);
+        $request->validate(['units' => 'required|integer|min:1']);
         $user = $request->user();
 
-        DB::transaction(function () use ($request,$user,$id) {
+        DB::transaction(function () use ($request, $user, $id, &$land) {
+            // Lock the land row to prevent race conditions
             $land = Land::lockForUpdate()->findOrFail($id);
 
             if ($land->available_units < $request->units) {
-                throw ValidationException::withMessages(['units'=>'Insufficient units available']);
+                throw ValidationException::withMessages(['units' => 'Insufficient units available']);
             }
 
             $amount = $land->current_price_per_unit_kobo * $request->units;
+
             if ($user->balance_kobo < $amount) {
-                throw ValidationException::withMessages(['wallet'=>'Insufficient balance']);
+                throw ValidationException::withMessages(['wallet' => 'Insufficient balance']);
             }
 
+            // Deduct user balance and decrease available units
             $user->decrement('balance_kobo', $amount);
             $land->decrement('available_units', $request->units);
 
+            // Update or create user's land units
             UserLand::firstOrCreate(
-                ['user_id'=>$user->id,'land_id'=>$land->id],
-                ['units'=>0]
+                ['user_id' => $user->id, 'land_id' => $land->id],
+                ['units' => 0]
             )->increment('units', $request->units);
 
+            // Create transaction record
             Transaction::create([
-                'user_id'=>$user->id,
-                'land_id'=>$land->id,
-                'units'=>$request->units,
-                'amount_kobo'=>$amount,
-                'status'=>'completed',
-                'type'=>'purchase',
-                'reference'=>'TX-'.Str::uuid(),
-                'transaction_date'=>now(),
+                'user_id' => $user->id,
+                'land_id' => $land->id,
+                'units' => $request->units,
+                'amount_kobo' => $amount,
+                'status' => 'completed',
+                'type' => 'purchase',
+                'reference' => 'TX-' . Str::uuid(),
+                'transaction_date' => now(),
             ]);
 
+            // Ledger entry
             LedgerEntry::create([
-                'uid'=>$user->id,
-                'type'=>'purchase',
-                'amount_kobo'=>$amount,
-                'balance_after'=>$user->balance_kobo,
-                'reference'=>'LAND-'.Str::uuid(),
+                'uid' => $user->id,
+                'type' => 'purchase',
+                'amount_kobo' => $amount,
+                'balance_after' => $user->balance_kobo,
+                'reference' => 'LAND-' . Str::uuid(),
             ]);
 
-            event(new LandUnitsPurchased($user->id,$land->id,$request->units,$land->current_price_per_unit_kobo,$amount));
-            $this->cacheLand($land);
+            // Trigger event for listeners
+            event(new LandUnitsPurchased($user->id, $land->id, $request->units, $land->current_price_per_unit_kobo, $amount));
+
+            //  Refresh cache AFTER commit
+            DB::afterCommit(function () use ($land) {
+                // Refresh land instance
+                $land->refresh();
+
+                // Forget individual land caches
+                Cache::tags(['lands:item'])->forget("land:{$land->id}:full");
+                Cache::tags(['lands:item'])->forget("land:{$land->id}:map");
+
+                // Flush list/map caches
+                Cache::tags(['lands:list','maps','admin:lands'])->flush();
+
+                // Optional: Preload fresh cache to avoid first-hit delay
+                app()->call(fn() => (new self)->getCachedLand($land->id));
+                app()->call(fn() => (new self)->getCachedLand($land->id, true));
+            });
         });
 
-        Cache::tags(['lands:list','maps','admin:lands'])->flush();
-
-        return $this->success(null,'Purchase successful');
-    }
-
-    public function updatePrice(Request $request, Land $land)
-    {
-        $this->authorizeAdmin();
-
-        $request->validate([
-            'price_per_unit_kobo'=>'required|integer|min:1',
-            'price_date'=>'required|date',
-        ]);
-
-        LandPriceHistory::create([
-            'land_id'=>$land->id,
-            'price_per_unit_kobo'=>$request->price_per_unit_kobo,
-            'price_date'=>$request->price_date,
-        ]);
-
-        event(new LandPriceChanged($land->id,$request->price_per_unit_kobo,$request->price_date));
-
-        $land->refresh();
-        $this->cacheLand($land);
-
-        Cache::tags(['lands:list','maps','admin:lands'])->flush();
-
-        return $this->success(null,'Price updated');
+        return $this->success(null, 'Purchase successful');
     }
 
     /* ================= HELPERS ================= */
 
     private function authorizeAdmin()
     {
-        abort_if(! auth()->user()?->is_admin,403);
+        abort_if(!auth()->user()?->is_admin, 403);
     }
 
     private function getMapColor(Land $land)
     {
-        $soldRatio = ($land->total_units - $land->available_units)/max(1,$land->total_units);
-        return match(true){
-            $soldRatio<0.25=>'green',
-            $soldRatio<0.5=>'yellow',
-            $soldRatio<0.75=>'orange',
-            default=>'red',
+        $soldRatio = ($land->total_units - $land->available_units) / max(1, $land->total_units);
+        return match(true) {
+            $soldRatio < 0.25 => 'green',
+            $soldRatio < 0.5 => 'yellow',
+            $soldRatio < 0.75 => 'orange',
+            default => 'red',
         };
     }
 
     private function handleImages(Request $request, Land $land)
     {
         if (!$request->hasFile('images')) return;
-        foreach($request->file('images') as $image){
-            $path = $image->store('land_images','public');
-            $land->images()->create(['image_path'=>$path]);
+        foreach ($request->file('images') as $image) {
+            $path = $image->store('land_images', 'public');
+            $land->images()->create(['image_path' => $path]);
         }
     }
 
     private function removeImages(array $ids)
     {
-        $images = LandImage::whereIn('id',$ids)->get();
-        foreach($images as $img){
+        $images = LandImage::whereIn('id', $ids)->get();
+        foreach ($images as $img) {
             Storage::disk('public')->delete($img->image_path);
             $img->delete();
         }
     }
 
-   private function cacheLand(Land $land)
+    private function refreshLandCache(Land $land)
     {
+        // Forget existing caches
         Cache::tags(['lands:item'])->forget("land:{$land->id}:full");
         Cache::tags(['lands:item'])->forget("land:{$land->id}:map");
+
+        // Rebuild immediately
+        $this->getCachedLand($land->id);
+        $this->getCachedLand($land->id, true);
     }
 
-     private function getCachedLand($id, $map = false)
+    private function getCachedLand($id, $map = false)
     {
         $key = $map ? "land:$id:map" : "land:$id:full";
 
@@ -299,64 +290,66 @@ class LandController extends Controller
             if (!$land) return null;
 
             $payload = [
-                'id'=>$land->id,
-                'title'=>$land->title,
-                'location'=>$land->location,
-                'size'=>$land->size,
-                'price_per_unit_kobo'=>$land->current_price_per_unit_kobo,
-                'total_units'=>$land->total_units,
-                'available_units'=>$land->available_units,
-                'units_sold'=>$land->units_sold,
-                'sold_percentage'=>$land->sold_percentage,
-                'map_color'=>$land->map_color,
-                'lat'=>$land->lat,
-                'lng'=>$land->lng,
+                'id' => $land->id,
+                'title' => $land->title,
+                'location' => $land->location,
+                'size' => $land->size,
+                'is_available' => $land->is_available,
+                'price_per_unit_kobo' => $land->current_price_per_unit_kobo,
+                'total_units' => $land->total_units,
+                'available_units' => $land->available_units,
+                'units_sold' => $land->units_sold,
+                'sold_percentage' => $land->sold_percentage,
+                'map_color' => $land->map_color,
+                'lat' => $land->lat,
+                'lng' => $land->lng,
             ];
 
             return $map ? $payload : $payload + [
-                'description'=>$land->description,
-                'coordinates'=>$land->coordinates_geojson,
-                'images'=>$land->images->map(fn($i)=>[
-                    'id'=>$i->id,
-                    'url'=>Storage::url($i->image_path),
+                'description' => $land->description,
+                'coordinates' => $land->coordinates_geojson,
+                'images' => $land->images->map(fn($i) => [
+                    'id' => $i->id,
+                    'url' => Storage::url($i->image_path),
                 ]),
             ];
         });
     }
 
-
     private function mapPayload(Land $land)
     {
         return [
-            'id'=>$land->id,
-            'title'=>$land->title,
-            'location'=>$land->location,
-            'size'=>$land->size,
-            'description'=>$land->description,
-            'price_per_unit_kobo'=>$land->current_price_per_unit_kobo,
-            'total_units'=>$land->total_units,
-            'available_units'=>$land->available_units,
-            'units_sold'=>$land->total_units-$land->available_units,
-            'sold_percentage'=>$land->total_units
-                ? round((($land->total_units-$land->available_units)/$land->total_units)*100,2)
+            'id' => $land->id,
+            'title' => $land->title,
+            'location' => $land->location,
+            'size' => $land->size,
+            'description' => $land->description,
+            'price_per_unit_kobo' => $land->current_price_per_unit_kobo,
+            'total_units' => $land->total_units,
+            'available_units' => $land->available_units,
+            'units_sold' => $land->total_units - $land->available_units,
+            'sold_percentage' => $land->total_units
+                ? round((($land->total_units - $land->available_units) / $land->total_units) * 100, 2)
                 : 0,
-            'heat'=>$land->total_units
-                ? min(1,round(log10(1+($land->total_units-$land->available_units))/log10(1+$land->total_units),3))
+            'heat' => $land->total_units
+                ? min(1, round(log10(1 + ($land->total_units - $land->available_units)) / log10(1 + $land->total_units), 3))
                 : 0,
-            'map_color'=>$this->getMapColor($land),
-            'coordinates'=>$land->coordinates_geojson,
-            'lat'=>$land->lat,
-            'lng'=>$land->lng,
-            'is_available'=>(bool)$land->is_available,
-            'images'=>$land->images->map(fn($img)=>['id'=>$img->id,'url'=>Storage::url($img->image_path)]),
+            'map_color' => $this->getMapColor($land),
+            'coordinates' => $land->coordinates_geojson,
+            'lat' => $land->lat,
+            'lng' => $land->lng,
+            'is_available' => (bool)$land->is_available,
+            'images' => $land->images->map(fn($img) => ['id' => $img->id, 'url' => Storage::url($img->image_path)]),
         ];
     }
 
-    private function success($data=null,$message='OK'){
-        return response()->json(compact('data','message')+['success'=>true]);
+    private function success($data = null, $message = 'OK')
+    {
+        return response()->json(compact('data', 'message') + ['success' => true]);
     }
 
-    private function error($message,$code=400){
-        return response()->json(['success'=>false,'message'=>$message],$code);
+    private function error($message, $code = 400)
+    {
+        return response()->json(['success' => false, 'message' => $message], $code);
     }
 }

@@ -19,6 +19,8 @@ return new class extends Migration
             'deposit',
             'withdrawal',
             'reversal',
+            'purchase',
+            'sale',
             'adjustment',
             'transaction_fee',
         ]);
