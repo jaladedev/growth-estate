@@ -11,7 +11,7 @@ class Kernel extends ConsoleKernel
     protected function schedule($schedule)
     {
         $schedule->job(new GenerateDailyPortfolioSnapshot)
-            ->dailyAt('00:10')
+            ->dailyAt('23:55')
             ->onOneServer()
             ->withoutOverlapping();
     }

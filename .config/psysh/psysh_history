@@ -6,3 +6,7 @@ exit
 config('cache.default');
 config('cache.default');
 config('cache.default');
+DB::table('portfolio_daily_snapshots')->truncate();
+dispatch(new \App\Jobs\GenerateDailyPortfolioSnapshot());
+DB::table('portfolio_daily_snapshots')->truncate();
+dispatch(new \App\Jobs\GenerateDailyPortfolioSnapshot());
