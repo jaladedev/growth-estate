@@ -247,7 +247,7 @@ class LandController extends Controller
         $key = $map ? "land:$id:map" : "land:$id:full";
 
         return Cache::tags(['lands:item'])->remember($key, now()->addMinutes(10), function () use ($id, $map) {
-            $land = Land::with(['images','latestPrice'])->find($id);
+            $land = Land::with(['images', 'latestPrice'])->find($id);
             if (!$land) return null;
 
             $payload = [

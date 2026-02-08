@@ -41,3 +41,8 @@ $prices = \App\Models\LandPriceHistory::currentPricesForLands($landIds);
 foreach ($prices as $landId => $price) {
     echo "Land {$landId}: ₦" . ($price->price_per_unit_kobo / 100) . " - Date: {$price->price_date}\n";
 }
+$landIds = [1, 2, 3];
+$prices = \App\Models\LandPriceHistory::currentPricesForLands($landIds);
+foreach ($prices as $landId => $price) {
+    echo "Land {$landId}: ₦" . ($price->price_per_unit_kobo / 100) . " - Date: {$price->price_date}\n";
+}

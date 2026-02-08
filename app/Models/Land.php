@@ -62,9 +62,11 @@ class Land extends Model
 
     public function latestPrice()
     {
-        return $this->hasOne(LandPriceHistory::class)->latestOfMany('price_date');
+        return $this->hasOne(LandPriceHistory::class)
+            ->where('price_date', '<=', now()->toDateString())
+            ->orderByDesc('price_date')
+            ->orderByDesc('created_at');
     }
-
 
     public function portfolioSnapshots()
     {
@@ -78,9 +80,7 @@ class Land extends Model
 
     public function getCurrentPricePerUnitKoboAttribute()
     {
-        return $this->priceHistory()
-            ->orderByDesc('price_date')
-            ->value('price_per_unit_kobo');
+        return $this->latestPrice?->price_per_unit_kobo ?? 0;
     }
 
     public function getUnitsSoldAttribute()
