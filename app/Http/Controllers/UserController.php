@@ -55,26 +55,39 @@ class UserController extends Controller
             return response()->json(['error' => 'User not authenticated'], 401);
         }
 
-        $purchases = Purchase::with('land')
-            ->where('user_id', $user->id)
+        // Get user's current holdings from user_land table
+        $userLands = $user->userLands()
+            ->with('land')
+            ->where('units', '>', 0)
             ->get();
 
-        $ownedLands = $purchases->map(function ($purchase) {
-            $currentPrice = LandPriceHistory::currentPrice($purchase->land->id);
-            $pricePerUnit = $currentPrice->price_per_unit_kobo;
+        if ($userLands->isEmpty()) {
+            return response()->json(['owned_lands' => []]);
+        }
+
+        // Get all land IDs
+        $landIds = $userLands->pluck('land_id')->toArray();
+
+        // Get current prices for all lands in one query
+        $prices = LandPriceHistory::currentPricesForLands($landIds);
+
+        $ownedLands = $userLands->map(function ($userLand) use ($prices) {
+            $price = $prices->get($userLand->land_id);
+            $pricePerUnit = $price ? $price->price_per_unit_kobo : 0;
 
             return [
-                'land_id' => $purchase->land->id,
-                'land_name' => $purchase->land->title,
-                'units_owned' => $purchase->units,
+                'land_id' => $userLand->land->id,
+                'land_name' => $userLand->land->title,
+                'units_owned' => $userLand->units,
                 'price_per_unit_kobo' => $pricePerUnit,
-                'current_value' => ($purchase->units * $pricePerUnit) / 100,
+                'price_per_unit_naira' => $pricePerUnit / 100,
+                'current_value_kobo' => $userLand->units * $pricePerUnit,
+                'current_value' => ($userLand->units * $pricePerUnit) / 100,
             ];
         });
 
         return response()->json(['owned_lands' => $ownedLands]);
     }
-
     
     public function setTransactionPin(Request $request)
     {

@@ -10,3 +10,34 @@ DB::table('portfolio_daily_snapshots')->truncate();
 dispatch(new \App\Jobs\GenerateDailyPortfolioSnapshot());
 DB::table('portfolio_daily_snapshots')->truncate();
 dispatch(new \App\Jobs\GenerateDailyPortfolioSnapshot());
+$landIds=[1,2,3]
+$prices = \App\Models\LandPriceHistory:currentPricesForLands($landIds); foreach ($prices as $landId => $price) { echo "Land {$landId}: # . ($price->price_per_unit_kobo / 100). " (Date: ($price-price_date})\n";}
+$prices = \App\Models\LandPriceHistory:currentPricesForLands($landIds); foreach ($prices as $landId => $price) { echo "Land {$landId}: # " . ($price->price_per_unit_kobo / 100). " (Date: ($price-price_date})\n";}
+$prices = \App\Models\LandPriceHistory:currentPricesForLands($landIds); 
+$prices = \App\Models\LandPriceHistory::currentPricesForLands($landIds); foreach ($prices as $landId => $price) { echo "Land {$landId}: # " . ($price->price_per_unit_kobo / 100). " (Date: ($price-price_date})\n";}
+$prices = \App\Models\LandPriceHistory::currentPricesForLands($landIds); foreach ($prices as $landId => $price) { echo "Land {$landId}: # " . ($price->price_per_unit_kobo / 100). " (Date: ($price-price_date})\n";}
+clear
+$prices = \App\Models\LandPriceHistory::currentPricesForLands($landIds); foreach ($prices as $landId => $price) { echo "Land {$landId}: # " . ($price->price_per_unit_kobo / 100). " (Date: ($price-price_date})\n";}
+clear
+clear
+$prices = \App\Models\LandPriceHistory::currentPricesForLands($landIds); foreach ($prices as $landId => $price) { echo "Land {$landId}: # " . ($price->price_per_unit_kobo / 100). " (Date: ($price-price_date})\n";}
+$prices = \App\Models\LandPriceHistory::currentPricesForLands($landIds); foreach ($prices as $landId => $price) { echo "Land {$landId}: # " . ($price->price_per_unit_kobo / 100). " (Date: ($price-price_date})\n";}
+exit
+\DB::select("
+    SELECT 
+        land_id,
+        price_per_unit_kobo,
+        price_date,
+        price_date::date as price_date_cast,
+        created_at,
+        pg_typeof(price_date) as price_date_type
+    FROM land_price_history
+    WHERE land_id IN (1,2,3)
+    ORDER BY land_id, price_date DESC
+");
+clear
+$landIds = [1, 2, 3];
+$prices = \App\Models\LandPriceHistory::currentPricesForLands($landIds);
+foreach ($prices as $landId => $price) {
+    echo "Land {$landId}: ₦" . ($price->price_per_unit_kobo / 100) . " - Date: {$price->price_date}\n";
+}

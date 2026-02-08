@@ -106,6 +106,16 @@ class User extends Authenticatable implements JWTSubject
         return $this->hasMany(PortfolioLandSnapshot::class);
     }
 
+    public function portfolioAssetSnapshots()
+    {
+        return $this->hasMany(portfolioAssetSnapshots::class);
+    }
+
+    public function latestPortfolioSnapshot()
+    {
+        return $this->hasOne(PortfolioDailySnapshot::class)
+            ->latestOfMany('snapshot_date');
+    }
     /* 
      | Wallet Logic 
     */

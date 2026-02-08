@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
+use App\Models\LandPriceHistory;
 
 class GenerateDailyPortfolioSnapshot implements ShouldQueue
 {
@@ -112,21 +113,30 @@ class GenerateDailyPortfolioSnapshot implements ShouldQueue
     protected function getPrices(string $snapshotDate): \Illuminate\Support\Collection
     {
         return Cache::remember(
-            "land_prices_as_of_{$snapshotDate}",
+            "land_prices_latest",
             now()->addMinutes(30),
-            function () use ($snapshotDate) {
-                return collect(DB::select("
-                    SELECT lph.land_id, lph.price_per_unit_kobo
-                    FROM land_price_history lph
-                    INNER JOIN (
-                        SELECT land_id, MAX(price_date) AS price_date
-                        FROM land_price_history
-                        WHERE price_date <= ?
-                        GROUP BY land_id
-                    ) latest
-                    ON lph.land_id = latest.land_id
-                    AND lph.price_date = latest.price_date
-                ", [$snapshotDate]))->keyBy('land_id');
+            function () {
+                // Get all unique land IDs that have holdings
+                $landIds = DB::table('user_land')
+                    ->where('units', '>', 0)
+                    ->distinct()
+                    ->pluck('land_id')
+                    ->toArray();
+
+                if (empty($landIds)) {
+                    return collect();
+                }
+
+                // Get current prices for all lands in one query
+                $prices = LandPriceHistory::currentPricesForLands($landIds);
+
+                // Transform to match expected structure
+                return $prices->map(function ($priceHistory) {
+                    return (object)[
+                        'land_id' => $priceHistory->land_id,
+                        'price_per_unit_kobo' => $priceHistory->price_per_unit_kobo
+                    ];
+                });
             }
         );
     }
@@ -156,7 +166,7 @@ class GenerateDailyPortfolioSnapshot implements ShouldQueue
                     DB::raw('SUM(total_amount_paid_kobo) - SUM(total_amount_received_kobo) as invested')
                 )
                 ->whereDate('purchase_date', '<=', $snapshotDate)
-                ->whereIn('status', ['completed', 'partially_sold']) // Include both statuses
+                ->whereIn('status', ['completed', 'partially_sold'])
                 ->groupBy('user_id')
                 ->get()
                 ->keyBy('user_id')
