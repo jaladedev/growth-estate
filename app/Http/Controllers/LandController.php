@@ -191,9 +191,8 @@ class LandController extends Controller
         return $this->success(
             $this->getCachedLand($land->id),
             'Price updated'
-        );
+        );  
     }
-
 
     /* ================= HELPERS ================= */
 
@@ -250,6 +249,20 @@ class LandController extends Controller
             $land = Land::with(['images', 'latestPrice'])->find($id);
             if (!$land) return null;
 
+            // Calculate heat
+            $soldPercentage = $land->sold_percentage / 100;
+            $unitsSoldRatio = $land->units_sold / max($land->total_units, 1);
+            $totalValue = $land->units_sold * $land->current_price_per_unit_kobo;
+            $valueHeat = min($totalValue / 10000000, 1);
+            $priceHeat = min($land->current_price_per_unit_kobo / 1000000, 1);
+            
+            $heat = ($soldPercentage * 0.35) + 
+                    ($unitsSoldRatio * 0.25) + 
+                    ($valueHeat * 0.25) + 
+                    ($priceHeat * 0.15);
+            
+            $heat = max(0.1, min($heat, 1.0));
+
             $payload = [
                 'id' => $land->id,
                 'title' => $land->title,
@@ -264,6 +277,7 @@ class LandController extends Controller
                 'map_color' => $land->map_color,
                 'lat' => $land->lat,
                 'lng' => $land->lng,
+                'heat' => round($heat, 2), // Add heat to all responses
             ];
 
             return $map ? $payload : $payload + [
@@ -291,9 +305,6 @@ class LandController extends Controller
             'units_sold' => $land->total_units - $land->available_units,
             'sold_percentage' => $land->total_units
                 ? round((($land->total_units - $land->available_units) / $land->total_units) * 100, 2)
-                : 0,
-            'heat' => $land->total_units
-                ? min(1, round(log10(1 + ($land->total_units - $land->available_units)) / log10(1 + $land->total_units), 3))
                 : 0,
             'map_color' => $this->getMapColor($land),
             'coordinates' => $land->coordinates_geojson,
