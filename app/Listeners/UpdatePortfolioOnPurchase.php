@@ -38,9 +38,9 @@ class UpdatePortfolioOnPurchase
                     $event->landId,
                     $date,
                     $event->units,
-                    $event->totalCost,  // Changed from amountKobo
+                    $event->totalCost,  
                     $landValue,
-                    $landValue - $event->totalCost  // Changed from amountKobo
+                    $landValue - $event->totalCost 
                 ]);
 
                 // DAILY TOTAL SNAPSHOT
