@@ -112,29 +112,6 @@ class Land extends Model
             ->value('geojson');
     }
 
-    /* Keep coordinates column in sync with lat/lng */
-   protected static function booted()
-        {
-        static::saving(function (Land $land) {
-        if (
-            $land->isDirty(['lat', 'lng']) &&
-            $land->lat !== null &&
-            $land->lng !== null
-        ) {
-            $land->coordinates = DB::raw("
-                ST_SetSRID(
-                    ST_MakePoint(
-                        {$land->lng}::double precision,
-                        {$land->lat}::double precision
-                    ),
-                    4326
-                )
-            ");
-        }
-    });
-
-    }
-
     public function scopeWithinBounds(
         Builder $query,
         float $north,

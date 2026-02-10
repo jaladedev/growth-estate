@@ -4,18 +4,12 @@ namespace App\Http\Controllers;
 
 use App\Models\Land;
 use App\Models\LandImage;
-use App\Models\Transaction;
-use App\Models\UserLand;
-use App\Models\LedgerEntry;
 use App\Models\LandPriceHistory;
-use App\Events\LandUnitsPurchased;
-use App\Events\LandPriceChanged;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Str;
-use Illuminate\Validation\ValidationException;
+use App\Events\LandPriceChanged;
 
 class LandController extends Controller
 {
@@ -44,7 +38,12 @@ class LandController extends Controller
         $cacheKey = "lands:map:$filterKey";
 
         $landIds = Cache::tags(['maps'])->remember($cacheKey, now()->addMinutes(5), function () use ($request) {
-            $query = Land::where('is_available', true)->whereNotNull('coordinates');
+            $query = Land::where('is_available', true)
+                ->where(function($q) {
+                    $q->whereNotNull('coordinates')
+                      ->orWhereNotNull('lat');
+                });
+            
             if ($request->filled(['north','south','east','west'])) {
                 $query->withinBounds($request->north, $request->south, $request->east, $request->west);
             }
@@ -85,13 +84,36 @@ class LandController extends Controller
             'total_units' => 'required|integer|min:1',
             'price_per_unit_kobo' => 'required|integer|min:1',
             'description' => 'nullable|string',
-            'lat' => 'nullable|numeric',
-            'lng' => 'nullable|numeric',
+            'lat' => 'nullable|numeric|between:-90,90',
+            'lng' => 'nullable|numeric|between:-180,180',
+            'coordinates' => 'nullable|array',
+            'coordinates.type' => 'required_with:coordinates|in:Point,Polygon',
+            'coordinates.coordinates' => 'required_with:coordinates',
             'images' => 'nullable|array',
             'images.*' => 'image|max:2048',
         ]);
 
+        // Normalize and validate coordinates
+        if (isset($data['coordinates'])) {
+            $data['coordinates'] = $this->normalizeCoordinates($data['coordinates']);
+            $this->validateGeoJSONStructure($data['coordinates']);
+            
+            // Auto-populate lat/lng from coordinates if not provided
+            if (!isset($data['lat']) || !isset($data['lng'])) {
+                $center = $this->extractCenter($data['coordinates']);
+                $data['lat'] = $center['lat'];
+                $data['lng'] = $center['lng'];
+            }
+        }
+
+        $land = null;
         DB::transaction(function () use ($data, &$land) {
+            // Convert GeoJSON to PostGIS geometry
+            $geometryWKT = null;
+            if (isset($data['coordinates'])) {
+                $geometryWKT = $this->geoJsonToWKT($data['coordinates']);
+            }
+
             $land = Land::create([
                 'title' => $data['title'],
                 'location' => $data['location'],
@@ -104,12 +126,21 @@ class LandController extends Controller
                 'is_available' => true,
             ]);
 
+            // Set PostGIS geometry using raw SQL
+            if ($geometryWKT) {
+                DB::statement(
+                    "UPDATE lands SET coordinates = ST_GeomFromText(?, 4326) WHERE id = ?",
+                    [$geometryWKT, $land->id]
+                );
+            }
+
             LandPriceHistory::create([
                 'land_id' => $land->id,
                 'price_per_unit_kobo' => $data['price_per_unit_kobo'],
                 'price_date' => now()->toDateString(),
             ]);
         });
+
         $this->handleImages($request, $land);
         $this->refreshLandCache($land);
         Cache::tags(['lands:list', 'maps', 'admin:lands'])->flush();
@@ -117,7 +148,7 @@ class LandController extends Controller
         return $this->success($this->getCachedLand($land->id), 'Land created');
     }
 
-    public function update(Request $request, $id)
+   public function update(Request $request, $id)
     {
         $this->authorizeAdmin();
 
@@ -128,29 +159,42 @@ class LandController extends Controller
             'location' => 'sometimes|string',
             'size' => 'sometimes|numeric',
             'total_units' => 'sometimes|integer|min:1',
-            'price_per_unit_kobo' => 'sometimes|integer|min:1',
             'description' => 'nullable|string',
             'is_available' => 'sometimes|boolean',
-            'lat' => 'nullable|numeric',
-            'lng' => 'nullable|numeric',
+            'lat' => 'nullable|numeric|between:-90,90',
+            'lng' => 'nullable|numeric|between:-180,180',
+            'coordinates' => 'nullable|array',
+            'coordinates.type' => 'required_with:coordinates|in:Point,Polygon',
+            'coordinates.coordinates' => 'required_with:coordinates',
         ]);
 
-        if (isset($data['total_units'])) {
-            $sold = $land->units_sold;
-            abort_if($data['total_units'] < $sold, 422, 'Total units less than sold units');
-            $data['available_units'] = $data['total_units'] - $sold;
+        // Normalize and validate coordinates if provided
+        if (!empty($data['coordinates'])) {
+            $data['coordinates'] = $this->normalizeCoordinates($data['coordinates']);
+            $this->validateGeoJSONStructure($data['coordinates']);
+
+            // Always update lat/lng from center for polygon
+            $center = $this->extractCenter($data['coordinates']);
+            $data['lat'] = $center['lat'];
+            $data['lng'] = $center['lng'];
+
+            // Update PostGIS geometry
+            $geometryWKT = $this->geoJsonToWKT($data['coordinates']);
+            DB::statement(
+                "UPDATE lands SET coordinates = ST_GeomFromText(?, 4326) WHERE id = ?",
+                [$geometryWKT, $land->id]
+            );
+        }
+        // If user sends lat/lng without coordinates, create Point geometry
+        else if (isset($data['lat'], $data['lng'])) {
+            $geometryWKT = sprintf('POINT(%F %F)', $data['lng'], $data['lat']);
+            DB::statement(
+                "UPDATE lands SET coordinates = ST_GeomFromText(?, 4326) WHERE id = ?",
+                [$geometryWKT, $land->id]
+            );
         }
 
-        if (isset($data['price_per_unit_kobo'])) {
-            LandPriceHistory::create([
-                'land_id' => $land->id,
-                'price_per_unit_kobo' => $data['price_per_unit_kobo'],
-                'price_date' => now()->toDateString(),
-            ]);
-
-            event(new LandPriceChanged($land->id, $data['price_per_unit_kobo'], now()->toDateString()));
-        }
-
+        // Update the model (this will update lat/lng if they were set from polygon center)
         $land->update(collect($data)->except('price_per_unit_kobo')->toArray());
 
         $this->handleImages($request, $land);
@@ -160,7 +204,7 @@ class LandController extends Controller
         return $this->success($this->getCachedLand($land->id), 'Land updated');
     }
 
-   public function updatePrice(Request $request, Land $land)
+    public function updatePrice(Request $request, Land $land)
     {
         $this->authorizeAdmin();
 
@@ -170,28 +214,19 @@ class LandController extends Controller
         ]);
 
         DB::transaction(function () use ($land, $data) {
-
             LandPriceHistory::create([
                 'land_id' => $land->id,
                 'price_per_unit_kobo' => $data['price_per_unit_kobo'],
                 'price_date' => $data['price_date'],
             ]);
 
-            event(new LandPriceChanged(
-                $land->id,
-                $data['price_per_unit_kobo'],
-                $data['price_date']
-            ));
+            event(new LandPriceChanged($land->id, $data['price_per_unit_kobo'], $data['price_date']));
         });
 
         $this->refreshLandCache($land);
-
         Cache::tags(['lands:list', 'maps', 'admin:lands'])->flush();
 
-        return $this->success(
-            $this->getCachedLand($land->id),
-            'Price updated'
-        );  
+        return $this->success($this->getCachedLand($land->id), 'Price updated');  
     }
 
     /* ================= HELPERS ================= */
@@ -201,15 +236,169 @@ class LandController extends Controller
         abort_if(!auth()->user()?->is_admin, 403);
     }
 
-    private function getMapColor(Land $land)
+    /**
+     * Normalize coordinates to ensure numeric values (not strings)
+     */
+    private function normalizeCoordinates(array $coords): array
     {
-        $soldRatio = ($land->total_units - $land->available_units) / max(1, $land->total_units);
-        return match(true) {
-            $soldRatio < 0.25 => 'green',
-            $soldRatio < 0.5 => 'yellow',
-            $soldRatio < 0.75 => 'orange',
-            default => 'red',
-        };
+        if (!isset($coords['type'])) {
+            return $coords;
+        }
+
+        if ($coords['type'] === 'Point') {
+            if (isset($coords['coordinates']) && is_array($coords['coordinates']) && count($coords['coordinates']) === 2) {
+                $coords['coordinates'][0] = (float) $coords['coordinates'][0]; // lng
+                $coords['coordinates'][1] = (float) $coords['coordinates'][1]; // lat
+            }
+        } elseif ($coords['type'] === 'Polygon') {
+            if (isset($coords['coordinates']) && is_array($coords['coordinates'])) {
+                foreach ($coords['coordinates'] as $ringIndex => &$ring) {
+                    if (is_array($ring)) {
+                        foreach ($ring as $pointIndex => &$point) {
+                            if (is_array($point) && count($point) === 2) {
+                                $point[0] = (float) $point[0]; // lng
+                                $point[1] = (float) $point[1]; // lat
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return $coords;
+    }
+
+    /**
+     * Validate GeoJSON structure for Point or Polygon
+     */
+    private function validateGeoJSONStructure(array $coordinates)
+    {
+        $type = $coordinates['type'] ?? null;
+
+        if ($type === 'Point') {
+            $this->validatePointStructure($coordinates);
+        } elseif ($type === 'Polygon') {
+            $this->validatePolygonStructure($coordinates);
+        } else {
+            abort(422, 'Invalid GeoJSON: type must be "Point" or "Polygon"');
+        }
+    }
+
+    /**
+     * Validate Point structure
+     */
+    private function validatePointStructure(array $coordinates)
+    {
+        if (!isset($coordinates['coordinates']) || !is_array($coordinates['coordinates'])) {
+            abort(422, 'Invalid GeoJSON Point: coordinates array is required');
+        }
+
+        if (count($coordinates['coordinates']) !== 2) {
+            abort(422, 'Invalid GeoJSON Point: must be [lng, lat]');
+        }
+
+        [$lng, $lat] = $coordinates['coordinates'];
+
+        if (!is_numeric($lng) || $lng < -180 || $lng > 180) {
+            abort(422, 'Invalid GeoJSON Point: longitude must be between -180 and 180');
+        }
+
+        if (!is_numeric($lat) || $lat < -90 || $lat > 90) {
+            abort(422, 'Invalid GeoJSON Point: latitude must be between -90 and 90');
+        }
+    }
+
+    /**
+     * Validate Polygon structure
+     */
+    private function validatePolygonStructure(array $coordinates)
+    {
+        if (!isset($coordinates['coordinates']) || !is_array($coordinates['coordinates'])) {
+            abort(422, 'Invalid GeoJSON Polygon: coordinates array is required');
+        }
+
+        foreach ($coordinates['coordinates'] as $ringIndex => $ring) {
+            if (!is_array($ring) || count($ring) < 4) {
+                abort(422, "Invalid GeoJSON Polygon: Ring $ringIndex must have at least 4 points");
+            }
+
+            foreach ($ring as $pointIndex => $point) {
+                if (!is_array($point) || count($point) !== 2) {
+                    abort(422, "Invalid GeoJSON Polygon: Point $pointIndex in ring $ringIndex must be [lng, lat]");
+                }
+
+                [$lng, $lat] = $point;
+
+                if (!is_numeric($lng) || $lng < -180 || $lng > 180) {
+                    abort(422, "Invalid GeoJSON Polygon: Invalid longitude at point $pointIndex");
+                }
+
+                if (!is_numeric($lat) || $lat < -90 || $lat > 90) {
+                    abort(422, "Invalid GeoJSON Polygon: Invalid latitude at point $pointIndex");
+                }
+            }
+
+            $first = $ring[0];
+            $last = $ring[count($ring) - 1];
+            
+            if ($first[0] !== $last[0] || $first[1] !== $last[1]) {
+                abort(422, "Invalid GeoJSON Polygon: Ring $ringIndex must be closed");
+            }
+        }
+    }
+
+    /**
+     * Extract center point from GeoJSON
+     */
+    private function extractCenter(array $coords): array
+    {
+        if ($coords['type'] === 'Point') {
+            return [
+                'lat' => $coords['coordinates'][1],
+                'lng' => $coords['coordinates'][0]
+            ];
+        }
+
+        if ($coords['type'] === 'Polygon') {
+            $points = $coords['coordinates'][0];
+            $latSum = 0;
+            $lngSum = 0;
+            $count = count($points) - 1; // Exclude closing point
+
+            for ($i = 0; $i < $count; $i++) {
+                $lngSum += $points[$i][0];
+                $latSum += $points[$i][1];
+            }
+
+            return [
+                'lat' => $latSum / $count,
+                'lng' => $lngSum / $count
+            ];
+        }
+
+        return ['lat' => null, 'lng' => null];
+    }
+
+    /**
+     * Convert GeoJSON to WKT (Well-Known Text) for PostGIS
+     */
+    private function geoJsonToWKT(array $geoJson): string
+    {
+        if ($geoJson['type'] === 'Point') {
+            [$lng, $lat] = $geoJson['coordinates'];
+            return "POINT($lng $lat)";
+        }
+
+        if ($geoJson['type'] === 'Polygon') {
+            $rings = [];
+            foreach ($geoJson['coordinates'] as $ring) {
+                $points = array_map(fn($p) => "{$p[0]} {$p[1]}", $ring);
+                $rings[] = '(' . implode(', ', $points) . ')';
+            }
+            return 'POLYGON(' . implode(', ', $rings) . ')';
+        }
+
+        return '';
     }
 
     private function handleImages(Request $request, Land $land)
@@ -221,22 +410,10 @@ class LandController extends Controller
         }
     }
 
-    private function removeImages(array $ids)
-    {
-        $images = LandImage::whereIn('id', $ids)->get();
-        foreach ($images as $img) {
-            Storage::disk('public')->delete($img->image_path);
-            $img->delete();
-        }
-    }
-
     private function refreshLandCache(Land $land)
     {
-        // Forget existing caches
         Cache::tags(['lands:item'])->forget("land:{$land->id}:full");
         Cache::tags(['lands:item'])->forget("land:{$land->id}:map");
-
-        // Rebuild immediately
         $this->getCachedLand($land->id);
         $this->getCachedLand($land->id, true);
     }
@@ -249,19 +426,38 @@ class LandController extends Controller
             $land = Land::with(['images', 'latestPrice'])->find($id);
             if (!$land) return null;
 
-            // Calculate heat
-            $soldPercentage = $land->sold_percentage / 100;
-            $unitsSoldRatio = $land->units_sold / max($land->total_units, 1);
-            $totalValue = $land->units_sold * $land->current_price_per_unit_kobo;
-            $valueHeat = min($totalValue / 10000000, 1);
-            $priceHeat = min($land->current_price_per_unit_kobo / 1000000, 1);
-            
-            $heat = ($soldPercentage * 0.35) + 
-                    ($unitsSoldRatio * 0.25) + 
-                    ($valueHeat * 0.25) + 
-                    ($priceHeat * 0.15);
-            
-            $heat = max(0.1, min($heat, 1.0));
+            // Convert PostGIS geometry to GeoJSON for frontend
+            $polygon = null;
+            $point = null;
+            $geometryType = null;
+
+            if ($land->coordinates) {
+                // Get GeoJSON from PostGIS
+                $geoJson = DB::selectOne(
+                    "SELECT ST_AsGeoJSON(coordinates) as geojson FROM lands WHERE id = ?",
+                    [$land->id]
+                );
+
+                if ($geoJson && $geoJson->geojson) {
+                    $coords = json_decode($geoJson->geojson, true);
+                    
+                    if ($coords && isset($coords['type'])) {
+                        $geometryType = $coords['type'];
+
+                        if ($coords['type'] === 'Polygon' && isset($coords['coordinates'][0])) {
+                            $polygon = array_map(
+                                fn($p) => ['lat' => $p[1], 'lng' => $p[0]], 
+                                $coords['coordinates'][0]
+                            );
+                        } elseif ($coords['type'] === 'Point' && isset($coords['coordinates'])) {
+                            $point = [
+                                'lat' => $coords['coordinates'][1],
+                                'lng' => $coords['coordinates'][0]
+                            ];
+                        }
+                    }
+                }
+            }
 
             $payload = [
                 'id' => $land->id,
@@ -274,50 +470,25 @@ class LandController extends Controller
                 'available_units' => $land->available_units,
                 'units_sold' => $land->units_sold,
                 'sold_percentage' => $land->sold_percentage,
-                'map_color' => $land->map_color,
                 'lat' => $land->lat,
                 'lng' => $land->lng,
-                'heat' => round($heat, 2), // Add heat to all responses
+                'geometry_type' => $geometryType,
+                'polygon' => $polygon,
+                'point' => $point,
+                'has_polygon' => !is_null($polygon),
+                'has_point' => !is_null($point),
             ];
 
             return $map ? $payload : $payload + [
                 'description' => $land->description,
-                'coordinates' => $land->coordinates_geojson,
-                'images' => $land->images->map(fn($i) => [
-                    'id' => $i->id,
-                    'url' => Storage::url($i->image_path),
-                ]),
+                'images' => $land->images->map(fn($i) => ['id' => $i->id, 'url' => Storage::url($i->image_path)]),
             ];
         });
     }
 
-    private function mapPayload(Land $land)
-    {
-        return [
-            'id' => $land->id,
-            'title' => $land->title,
-            'location' => $land->location,
-            'size' => $land->size,
-            'description' => $land->description,
-            'price_per_unit_kobo' => $land->current_price_per_unit_kobo,
-            'total_units' => $land->total_units,
-            'available_units' => $land->available_units,
-            'units_sold' => $land->total_units - $land->available_units,
-            'sold_percentage' => $land->total_units
-                ? round((($land->total_units - $land->available_units) / $land->total_units) * 100, 2)
-                : 0,
-            'map_color' => $this->getMapColor($land),
-            'coordinates' => $land->coordinates_geojson,
-            'lat' => $land->lat,
-            'lng' => $land->lng,
-            'is_available' => (bool)$land->is_available,
-            'images' => $land->images->map(fn($img) => ['id' => $img->id, 'url' => Storage::url($img->image_path)]),
-        ];
-    }
-
     private function success($data = null, $message = 'OK')
     {
-        return response()->json(compact('data', 'message') + ['success' => true]);
+        return response()->json(['success' => true, 'data' => $data, 'message' => $message]);
     }
 
     private function error($message, $code = 400)
