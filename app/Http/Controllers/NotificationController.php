@@ -31,4 +31,23 @@ class NotificationController extends Controller
             'message' => 'All notifications marked as read'
         ]);
     }
+
+    public function markAsRead(Request $request, $notificationId)
+    {
+        $user = $request->user();
+        $notification = $user->notifications()->find($notificationId);
+
+        if (! $notification) {
+            return response()->json([
+                'message' => 'Notification not found'
+            ], 404);
+        }
+
+        $notification->markAsRead();
+
+        return response()->json([
+            'message' => 'Notification marked as read',
+            'success' => true,
+        ]);
+    }
 }
