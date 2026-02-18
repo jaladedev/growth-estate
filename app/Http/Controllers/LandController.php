@@ -482,6 +482,10 @@ class LandController extends Controller
             return $map ? $payload : $payload + [
                 'description' => $land->description,
                 'images' => $land->images->map(fn($i) => ['id' => $i->id, 'url' => Storage::url($i->image_path)]),
+                'images' => $land->images->map(fn($i) => [
+                    'id' => $i->id, 
+                    'url' => $i->image_url  
+                ]),
             ];
         });
     }
