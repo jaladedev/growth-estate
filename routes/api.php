@@ -11,8 +11,11 @@ use App\Http\Controllers\PortfolioController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PaystackWebhookController; 
 use App\Http\Controllers\MonnifyWebhookController;
+use App\Http\Controllers\KycController;
+use App\Http\Controllers\ReferralController;
 use App\Http\Middleware\CheckTransactionPin;
 use App\Http\Middleware\AdminMiddleware;
+
 /*
 |--------------------------------------------------------------------------
 | Public Routes
@@ -34,27 +37,24 @@ Route::prefix('password')->group(function () {
     Route::post('/reset', [AuthController::class, 'resetPassword']);
 });
 
+// Public referral code validation (for registration page)
+Route::post('/referrals/validate', [ReferralController::class, 'validateCode']);
+
 // Public lands
 Route::get('/land', [LandController::class, 'index']);
 
 /*
 |--------------------------------------------------------------------------
-| Paystack
+| Paystack & Monnify
 |--------------------------------------------------------------------------
 */
 
-// deposit webhook 
 Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle'])
     ->withoutMiddleware(['auth:api', 'throttle']);
 Route::post('/monnify/webhook', [MonnifyWebhookController::class, 'handle'])
    ->withoutMiddleware(['auth:api', 'throttle']);
 
-// Paystack redirect (frontend only)
-// Route::get('/deposit/callback', [DepositController::class, 'handleDepositCallback']);
-
-// Frontend deposit status check
 Route::get('/deposit/verify/{reference}', [DepositController::class, 'verifyDeposit']);
-
 
 /*
 |--------------------------------------------------------------------------
@@ -78,13 +78,39 @@ Route::middleware('jwt.auth')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::post('/user/change-password', [AuthController::class, 'changePassword']);
 
-       Route::prefix('lands')->group(function () {
+        /*
+        |--------------------------------------------------------------------------
+        | KYC Routes
+        |--------------------------------------------------------------------------
+        */
+        Route::prefix('kyc')->group(function () {
+            Route::get('/status', [KycController::class, 'status']);
+            Route::post('/submit', [KycController::class, 'submit']);
+        });
 
         /*
         |--------------------------------------------------------------------------
-        | ADMIN ROUTES 
+        | Referral Routes
         |--------------------------------------------------------------------------
         */
+        Route::prefix('referrals')->group(function () {
+            Route::get('/dashboard', [ReferralController::class, 'dashboard']);
+            Route::get('/rewards', [ReferralController::class, 'availableRewards']);
+            Route::post('/rewards/{rewardId}/claim', [ReferralController::class, 'claimReward']);
+        });
+
+        /*
+        |--------------------------------------------------------------------------
+        | Land Routes
+        |--------------------------------------------------------------------------
+        */
+        Route::prefix('lands')->group(function () {
+
+            /*
+            |--------------------------------------------------------------------------
+            | ADMIN ROUTES 
+            |--------------------------------------------------------------------------
+            */
             Route::get('/admin/show', [LandController::class, 'adminIndex'])
                 ->middleware(AdminMiddleware::class);
 
@@ -126,17 +152,18 @@ Route::middleware('jwt.auth')->group(function () {
             Route::get('/{id}', [LandController::class, 'show']);
         });
 
-
         // User
         Route::get('/user/lands', [UserController::class, 'getAllUserLands']);
         Route::get('/user/stats', [UserController::class, 'getUserStats']);
         Route::get('/transactions/user', [UserController::class, 'getUserTransactions']);
 
+        // Portfolio
         Route::get('/portfolio/summary', [PortfolioController::class, 'summary']);
         Route::get('/portfolio/chart', [PortfolioController::class, 'chart']);
         Route::get('/portfolio/performance', [PortfolioController::class, 'performance']);
         Route::get('/portfolio/allocation', [PortfolioController::class, 'allocation']);
         Route::get('/portfolio/asset/{land}', [PortfolioController::class, 'asset']);
+
         /*
         |--------------------------------------------------------------------------
         | Transaction PIN
@@ -181,19 +208,26 @@ Route::middleware('jwt.auth')->group(function () {
         Route::post('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
     });
 
-        /*
-        |--------------------------------------------------------------------------
-        | ADMIN ROUTES (JWT + Admin Role Required)
-        |--------------------------------------------------------------------------
-        */
+    /*
+    |--------------------------------------------------------------------------
+    | ADMIN ROUTES (JWT + Admin + Verified)
+    |--------------------------------------------------------------------------
+    */
+    Route::middleware(['verified', AdminMiddleware::class])->prefix('admin')->group(function () {
+        
+        // KYC Management
+        Route::prefix('kyc')->group(function () {
+            Route::get('/', [KycController::class, 'adminIndex']);
+            Route::get('/{id}', [KycController::class, 'adminShow']);
+            Route::post('/{id}/approve', [KycController::class, 'approve']);
+            Route::post('/{id}/reject', [KycController::class, 'reject']);
+            Route::post('/{id}/resubmit', [KycController::class, 'requestResubmit']);
+        });
 
-        // Route::prefix('admin')
-        //     ->middleware(['jwt.auth', AdminMiddleware::class])
-        //     ->group(function () {
-
-        //         // Dashboard Stats
-        //         Route::get('/dashboard/stats', [AdminDashboardController::class, 'stats']);
-        //         Route::get('/messages', [ContactController::class, 'index']);
-        //         Route::get('/messages/{id}', [ContactController::class, 'show']);
-
+        // Referral Management
+        Route::prefix('referrals')->group(function () {
+            Route::get('/', [ReferralController::class, 'adminIndex']);
+            Route::get('/stats', [ReferralController::class, 'adminStats']);
+        });
+    });
 });

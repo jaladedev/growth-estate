@@ -9,6 +9,8 @@ use App\Models\UserLand;
 use App\Models\LedgerEntry;
 use App\Events\LandUnitsPurchased;
 use App\Events\LandUnitsSold;
+use App\Models\Referral;
+use App\Models\ReferralReward;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -43,7 +45,7 @@ class PurchaseController extends Controller
 
                 /** Pricing (kobo) */
                 $pricePerUnit = $land->current_price_per_unit_kobo;
-                $totalCost = $pricePerUnit * $request->units;
+                $totalCost    = $pricePerUnit * $request->units;
 
                 if ($user->balance_kobo < $totalCost) {
                     throw ValidationException::withMessages([
@@ -53,15 +55,15 @@ class PurchaseController extends Controller
 
                 $reference = 'PUR-' . Str::uuid();
 
-                /** Wallet debit */
+                $balanceAfter = $user->balance_kobo - $totalCost;
                 $user->decrement('balance_kobo', $totalCost);
 
                 LedgerEntry::create([
-                    'uid' => $user->id,
-                    'type' => 'withdrawal',
-                    'amount_kobo' => $totalCost,
-                    'balance_after' => $user->balance_kobo,
-                    'reference' => $reference,
+                    'uid'          => $user->id,
+                    'type'         => 'withdrawal',
+                    'amount_kobo'  => $totalCost,
+                    'balance_after' => $balanceAfter,   
+                    'reference'    => $reference,
                 ]);
 
                 /** Update land */
@@ -69,22 +71,24 @@ class PurchaseController extends Controller
                 $land->is_available = $land->available_units > 0;
                 $land->save();
 
+                $isFirstPurchase = ! Purchase::where('user_id', $user->id)->exists();
+
                 /** Purchase summary */
                 $purchase = Purchase::lockForUpdate()->firstOrCreate(
                     ['user_id' => $user->id, 'land_id' => $land->id],
                     [
-                        'units' => 0,
-                        'units_sold' => 0,
-                        'total_amount_paid_kobo' => 0,
+                        'units'                      => 0,
+                        'units_sold'                 => 0,
+                        'total_amount_paid_kobo'     => 0,
                         'total_amount_received_kobo' => 0,
-                        'status' => 'active',
-                        'purchase_date' => now(),
+                        'status'                     => 'active',
+                        'purchase_date'              => now(),
                     ]
                 );
 
                 $purchase->increment('units', $request->units);
                 $purchase->increment('total_amount_paid_kobo', $totalCost);
-                $purchase->reference = $reference;
+                $purchase->reference     = $reference;
                 $purchase->purchase_date = now();
                 $purchase->save();
 
@@ -96,15 +100,19 @@ class PurchaseController extends Controller
 
                 /** Transaction log */
                 Transaction::create([
-                    'user_id' => $user->id,
-                    'land_id' => $land->id,
-                    'type' => 'purchase',
-                    'units' => $request->units,
-                    'amount_kobo' => $totalCost,
-                    'status' => 'completed',
-                    'reference' => $reference,
+                    'user_id'          => $user->id,
+                    'land_id'          => $land->id,
+                    'type'             => 'purchase',
+                    'units'            => $request->units,
+                    'amount_kobo'      => $totalCost,
+                    'status'           => 'completed',
+                    'reference'        => $reference,
                     'transaction_date' => now(),
                 ]);
+
+                if ($isFirstPurchase) {
+                    $this->completeReferral($user);
+                }
 
                 /** Event (fires AFTER commit automatically) */
                 event(new LandUnitsPurchased(
@@ -116,15 +124,15 @@ class PurchaseController extends Controller
                 ));
 
                 return response()->json([
-                    'message' => 'Purchase successful',
-                    'reference' => $reference,
+                    'message'         => 'Purchase successful',
+                    'reference'       => $reference,
                     'amount_paid_kobo' => $totalCost,
                     'remaining_units' => $land->available_units,
                 ]);
             });
         } catch (\Throwable $e) {
             Log::error('Purchase failed', [
-                'error' => $e->getMessage(),
+                'error'   => $e->getMessage(),
                 'user_id' => $user->id,
                 'land_id' => $landId,
             ]);
@@ -160,7 +168,7 @@ class PurchaseController extends Controller
 
                 $land = Land::lockForUpdate()->findOrFail($landId);
 
-                $pricePerUnit = $land->current_price_per_unit_kobo;
+                $pricePerUnit  = $land->current_price_per_unit_kobo;
                 $totalReceived = $pricePerUnit * $request->units;
 
                 $reference = 'SALE-' . Str::uuid();
@@ -170,7 +178,7 @@ class PurchaseController extends Controller
                 $purchase->increment('units_sold', $request->units);
                 $purchase->increment('total_amount_received_kobo', $totalReceived);
                 $purchase->sell_date = now();
-                $purchase->status = $purchase->units === 0 ? 'sold_out' : 'partially_sold';
+                $purchase->status    = $purchase->units === 0 ? 'sold_out' : 'partially_sold';
                 $purchase->reference = $reference;
                 $purchase->save();
 
@@ -179,15 +187,15 @@ class PurchaseController extends Controller
                 $land->is_available = true;
                 $land->save();
 
-                /** Wallet credit */
+                $balanceAfter = $user->balance_kobo + $totalReceived;
                 $user->increment('balance_kobo', $totalReceived);
 
                 LedgerEntry::create([
-                    'uid' => $user->id,
-                    'type' => 'deposit',
-                    'amount_kobo' => $totalReceived,
-                    'balance_after' => $user->balance_kobo,
-                    'reference' => $reference,
+                    'uid'          => $user->id,
+                    'type'         => 'deposit',
+                    'amount_kobo'  => $totalReceived,
+                    'balance_after' => $balanceAfter,   
+                    'reference'    => $reference,
                 ]);
 
                 /** Portfolio */
@@ -197,13 +205,13 @@ class PurchaseController extends Controller
 
                 /** Transaction log */
                 Transaction::create([
-                    'user_id' => $user->id,
-                    'land_id' => $land->id,
-                    'type' => 'sale',
-                    'units' => $request->units,
-                    'amount_kobo' => $totalReceived,
-                    'status' => 'completed',
-                    'reference' => $reference,
+                    'user_id'          => $user->id,
+                    'land_id'          => $land->id,
+                    'type'             => 'sale',
+                    'units'            => $request->units,
+                    'amount_kobo'      => $totalReceived,
+                    'status'           => 'completed',
+                    'reference'        => $reference,
                     'transaction_date' => now(),
                 ]);
 
@@ -217,20 +225,69 @@ class PurchaseController extends Controller
                 ));
 
                 return response()->json([
-                    'message' => 'Units sold successfully',
-                    'reference' => $reference,
+                    'message'            => 'Units sold successfully',
+                    'reference'          => $reference,
                     'amount_received_kobo' => $totalReceived,
-                    'available_units' => $land->available_units,
+                    'available_units'    => $land->available_units,
                 ]);
             });
         } catch (\Throwable $e) {
             Log::error('Sale failed', [
-                'error' => $e->getMessage(),
+                'error'   => $e->getMessage(),
                 'user_id' => $user->id,
                 'land_id' => $landId,
             ]);
 
             throw $e;
+        }
+    }
+
+    private function completeReferral($referredUser)
+    {
+        $referral = Referral::where('referred_user_id', $referredUser->id)
+            ->where('status', 'pending')
+            ->first();
+
+        if (! $referral) {
+            return;
+        }
+
+        try {
+            DB::transaction(function () use ($referral) {
+                $referral->update([
+                    'status'       => 'completed',
+                    'completed_at' => now(),
+                ]);
+
+                // Reward for referrer
+                ReferralReward::create([
+                    'referral_id'  => $referral->id,
+                    'user_id'      => $referral->referrer_id,
+                    'reward_type'  => 'cashback',
+                    'amount_kobo'  => 5000, // ₦50
+                    'claimed'      => false,
+                ]);
+
+                // Reward for referred user
+                ReferralReward::create([
+                    'referral_id'         => $referral->id,
+                    'user_id'             => $referral->referred_user_id,
+                    'reward_type'         => 'discount',
+                    'discount_percentage' => 10,
+                    'claimed'             => false,
+                ]);
+
+                Log::info('Referral completed', [
+                    'referral_id'      => $referral->id,
+                    'referrer_id'      => $referral->referrer_id,
+                    'referred_user_id' => $referral->referred_user_id,
+                ]);
+            });
+        } catch (\Exception $e) {
+            Log::error('Failed to complete referral', [
+                'referral_id' => $referral->id,
+                'error'       => $e->getMessage(),
+            ]);
         }
     }
 }
