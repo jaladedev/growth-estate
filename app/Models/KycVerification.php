@@ -31,13 +31,13 @@ class KycVerification extends Model
 
     protected $casts = [
         'date_of_birth' => 'date',
-        'verified_at' => 'datetime',
+        'verified_at'   => 'datetime',
     ];
 
-    protected $appends = [
-        'id_front_url',
-        'id_back_url',
-        'selfie_url',
+    protected $hidden = [
+        'id_front_path',
+        'id_back_path',
+        'selfie_path',
     ];
 
     public function user()
@@ -48,27 +48,6 @@ class KycVerification extends Model
     public function verifier()
     {
         return $this->belongsTo(User::class, 'verified_by');
-    }
-
-    public function getIdFrontUrlAttribute()
-    {
-        return $this->id_front_path 
-            ? asset('storage/' . $this->id_front_path) 
-            : null;
-    }
-
-    public function getIdBackUrlAttribute()
-    {
-        return $this->id_back_path 
-            ? asset('storage/' . $this->id_back_path) 
-            : null;
-    }
-
-    public function getSelfieUrlAttribute()
-    {
-        return $this->selfie_path 
-            ? asset('storage/' . $this->selfie_path) 
-            : null;
     }
 
     public function scopePending($query)

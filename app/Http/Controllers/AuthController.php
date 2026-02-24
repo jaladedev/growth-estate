@@ -44,23 +44,23 @@ class AuthController extends Controller
             return response()->json([
                 'success' => true,
                 'user'    => [
-                    'id'               => $user->id,
-                    'uid'              => $user->uid,
-                    'name'             => $user->name,
-                    'email'            => $user->email,
+                    'id'                => $user->id,
+                    'uid'               => $user->uid,
+                    'name'              => $user->name,
+                    'email'             => $user->email,
                     'email_verified_at' => $user->email_verified_at,
-                    'transaction_pin'  => $user->transaction_pin,
-                    'is_admin'         => $user->is_admin,
-                    'created_at'       => $user->created_at,
-                    'updated_at'       => $user->updated_at,
-                    'balance_kobo'     => $user->balance_kobo,
-                    'bank_name'        => $user->bank_name,
-                    'bank_code'        => $user->bank_code,
-                    'account_number'   => $user->account_number,
-                    'account_name'     => $user->account_name,
-                    'referral_code'    => $user->referral_code,
-                    'is_kyc_verified'  => $user->is_kyc_verified,
-                    'kyc_status'       => $user->kyc_status,
+                    'transaction_pin'   => $user->transaction_pin,
+                    'is_admin'          => $user->is_admin,
+                    'created_at'        => $user->created_at,
+                    'updated_at'        => $user->updated_at,
+                    'balance_kobo'      => $user->balance_kobo,
+                    'bank_name'         => $user->bank_name,
+                    'bank_code'         => $user->bank_code,
+                    'account_number'    => $user->account_number,
+                    'account_name'      => $user->account_name,
+                    'referral_code'     => $user->referral_code,
+                    'is_kyc_verified'   => $user->is_kyc_verified,
+                    'kyc_status'        => $user->kyc_status,
                 ],
             ]);
         } catch (\Exception $e) {
@@ -110,13 +110,11 @@ class AuthController extends Controller
                         'referred_user_id' => $user->id,
                         'status'           => 'pending',
                     ]);
-
-                    Log::info("User {$user->id} registered with referral from user {$referrer->id}");
                 }
             }
 
-            $verificationCode          = random_int(100000, 999999);
-            $user->verification_code   = $verificationCode;
+            $verificationCode               = random_int(100000, 999999);
+            $user->verification_code        = $verificationCode;
             $user->verification_code_expiry = now()->addMinutes(30);
             $user->save();
 
@@ -203,12 +201,14 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
         if (! $user) {
-            return $this->sendErrorResponse('User not found', 404);
+            return $this->sendSuccessResponse([], 'If that email is registered, a reset code has been sent.');
         }
 
         $resetCode = random_int(100000, 999999);
-        $user->password_reset_code = $resetCode;
+
+        $user->password_reset_code            = Hash::make((string) $resetCode);
         $user->password_reset_code_expires_at = now()->addMinutes(30);
+        $user->password_reset_verified        = false;
         $user->save();
 
         try {
@@ -221,7 +221,7 @@ class AuthController extends Controller
             );
         }
 
-        return $this->sendSuccessResponse([], 'Password reset code sent to your email.');
+        return $this->sendSuccessResponse([], 'If that email is registered, a reset code has been sent.');
     }
 
     public function verifyResetCode(Request $request)
@@ -233,21 +233,17 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
-        if (! $user) {
-            return $this->sendErrorResponse('User not found', 404);
-        }
-
         if (
+            ! $user ||
             ! $user->password_reset_code ||
             ! $user->password_reset_code_expires_at ||
             $user->password_reset_code_expires_at->isPast() ||
-            (string) $user->password_reset_code !== (string) $request->reset_code
+            ! Hash::check((string) $request->reset_code, $user->password_reset_code)
         ) {
-            return $this->sendErrorResponse('Invalid or expired reset code', 400);
+            return $this->sendErrorResponse('Invalid or expired reset code.', 400);
         }
 
-        $user->password_reset_code = null;
-        $user->password_reset_code_expires_at = null;
+        $user->password_reset_verified = true;
         $user->save();
 
         return $this->sendSuccessResponse([], 'Reset code verified. You can now reset your password.');
@@ -275,20 +271,24 @@ class AuthController extends Controller
         $user = User::where('email', $request->email)->first();
 
         if (! $user) {
-            return $this->sendErrorResponse(
-                'No account found with this email. Please check your email address.',
-                404
-            );
+            return $this->sendErrorResponse('Invalid request.', 400);
         }
 
-        if ($user->password_reset_code !== null || $user->password_reset_code_expires_at !== null) {
+        if (
+            ! $user->password_reset_verified ||
+            ! $user->password_reset_code_expires_at ||
+            $user->password_reset_code_expires_at->isPast()
+        ) {
             return $this->sendErrorResponse(
                 'Please verify the reset code before setting a new password.',
                 400
             );
         }
 
-        $user->password = Hash::make($request->password);
+        $user->password                       = Hash::make($request->password);
+        $user->password_reset_code            = null;
+        $user->password_reset_code_expires_at = null;
+        $user->password_reset_verified        = false;
         $user->save();
 
         return $this->sendSuccessResponse([], 'Password has been reset successfully.');
@@ -360,7 +360,6 @@ class AuthController extends Controller
         $user = $request->user();
 
         if (! $user) {
-            Log::warning('Unauthenticated password change attempt');
             return $this->sendErrorResponse('Unauthenticated.', 401);
         }
 

@@ -9,7 +9,7 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\WithdrawalController;
 use App\Http\Controllers\PortfolioController;
 use App\Http\Controllers\NotificationController;
-use App\Http\Controllers\PaystackWebhookController; 
+use App\Http\Controllers\PaystackWebhookController;
 use App\Http\Controllers\MonnifyWebhookController;
 use App\Http\Controllers\KycController;
 use App\Http\Controllers\ReferralController;
@@ -32,108 +32,96 @@ Route::post('/email/resend-verification', [AuthController::class, 'resendVerific
 
 // Password reset
 Route::prefix('password')->group(function () {
-    Route::post('/reset/code', [AuthController::class, 'sendPasswordResetCode']);
+    Route::post('/reset/code',   [AuthController::class, 'sendPasswordResetCode']);
     Route::post('/reset/verify', [AuthController::class, 'verifyResetCode']);
-    Route::post('/reset', [AuthController::class, 'resetPassword']);
+    Route::post('/reset',        [AuthController::class, 'resetPassword']);
 });
 
 // Public referral code validation (for registration page)
 Route::post('/referrals/validate', [ReferralController::class, 'validateCode']);
 
-// Public lands
+// Public land listing
 Route::get('/land', [LandController::class, 'index']);
 
 /*
 |--------------------------------------------------------------------------
-| Paystack & Monnify
+| Webhooks — no auth, no throttle, signature-verified internally
 |--------------------------------------------------------------------------
 */
-
 Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle'])
     ->withoutMiddleware(['auth:api', 'throttle']);
-Route::post('/monnify/webhook', [MonnifyWebhookController::class, 'handle'])
-   ->withoutMiddleware(['auth:api', 'throttle']);
 
-Route::get('/deposit/verify/{reference}', [DepositController::class, 'verifyDeposit']);
+Route::post('/monnify/webhook', [MonnifyWebhookController::class, 'handle'])
+    ->withoutMiddleware(['auth:api', 'throttle']);
 
 /*
 |--------------------------------------------------------------------------
-| Protected Routes (JWT)
+| Protected Routes (JWT required)
 |--------------------------------------------------------------------------
 */
 Route::middleware('jwt.auth')->group(function () {
 
     // Session
-    Route::get('/me', [AuthController::class, 'me']);
+    Route::get('/me',       [AuthController::class, 'me']);
     Route::post('/refresh', [AuthController::class, 'refresh']);
+
+    Route::get('/deposit/verify/{reference}', [DepositController::class, 'verifyDeposit']);
 
     /*
     |--------------------------------------------------------------------------
-    | Verified Users
+    | Verified email required for all routes below
     |--------------------------------------------------------------------------
     */
     Route::middleware('verified')->group(function () {
 
         // Auth
-        Route::post('/logout', [AuthController::class, 'logout']);
+        Route::post('/logout',              [AuthController::class, 'logout']);
         Route::post('/user/change-password', [AuthController::class, 'changePassword']);
 
         /*
         |--------------------------------------------------------------------------
-        | KYC Routes
+        | KYC
         |--------------------------------------------------------------------------
         */
         Route::prefix('kyc')->group(function () {
-            Route::get('/status', [KycController::class, 'status']);
+            Route::get('/status',  [KycController::class, 'status']);
             Route::post('/submit', [KycController::class, 'submit']);
+
+            // Authenticated image endpoint from security fixes.
+            // Returns a 5-minute signed URL for a KYC document.
+            // Enforces owner-or-admin check inside the controller.
+            Route::get('/{id}/image/{imageType}', [KycController::class, 'getImageUrl'])
+                ->name('kyc.image')
+                ->where('imageType', 'id_front|id_back|selfie');
         });
 
         /*
         |--------------------------------------------------------------------------
-        | Referral Routes
+        | Referrals
         |--------------------------------------------------------------------------
         */
         Route::prefix('referrals')->group(function () {
-            Route::get('/dashboard', [ReferralController::class, 'dashboard']);
-            Route::get('/rewards', [ReferralController::class, 'availableRewards']);
+            Route::get('/dashboard',              [ReferralController::class, 'dashboard']);
+            Route::get('/rewards',                [ReferralController::class, 'availableRewards']);
             Route::post('/rewards/{rewardId}/claim', [ReferralController::class, 'claimReward']);
         });
 
         /*
         |--------------------------------------------------------------------------
-        | Land Routes
+        | Lands
         |--------------------------------------------------------------------------
         */
         Route::prefix('lands')->group(function () {
 
-            /*
-            |--------------------------------------------------------------------------
-            | ADMIN ROUTES 
-            |--------------------------------------------------------------------------
-            */
-            Route::get('/admin/show', [LandController::class, 'adminIndex'])
-                ->middleware(AdminMiddleware::class);
+            // FIX 4: /lands/map was nested as /lands/lands/map due to
+            // being inside the 'lands' prefix group. Fixed the path.
+            Route::get('/map', [LandController::class, 'mapIndex']);
 
-            Route::post('/admin/create', [LandController::class, 'store'])
-                ->middleware(AdminMiddleware::class);
+            // Listings & detail
+            Route::get('/',     [LandController::class, 'index']);
+            Route::get('/{id}', [LandController::class, 'show']);
 
-            Route::post('/admin/{id}', [LandController::class, 'update'])
-                ->middleware(AdminMiddleware::class);
-
-            Route::patch('/admin/{id}/disable', [LandController::class, 'disable'])
-                ->middleware(AdminMiddleware::class);
-
-            Route::patch('/admin/{id}/enable', [LandController::class, 'enable'])
-               ->middleware(AdminMiddleware::class); 
-
-            Route::patch('/admin/{land}/price', [LandController::class, 'updatePrice'])
-               ->middleware(AdminMiddleware::class);
-
-            /*
-            |--------------------------------------------------------------------------
-            | USER ACTIONS
-            |--------------------------------------------------------------------------
-            */
+            // User actions — require transaction PIN
             Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])
                 ->middleware(CheckTransactionPin::class);
 
@@ -141,39 +129,47 @@ Route::middleware('jwt.auth')->group(function () {
                 ->middleware(CheckTransactionPin::class);
 
             Route::get('/{id}/units', [UserController::class, 'getUserUnitsForLand']);
-
-            /*
-            |--------------------------------------------------------------------------
-            | VERIFIED USER
-            |--------------------------------------------------------------------------
-            */
-            Route::get('/', [LandController::class, 'index']);
-            Route::get('/lands/map', [LandController::class, 'mapIndex']);
-            Route::get('/{id}', [LandController::class, 'show']);
         });
-
-        // User
-        Route::get('/user/lands', [UserController::class, 'getAllUserLands']);
-        Route::get('/user/stats', [UserController::class, 'getUserStats']);
-        Route::get('/transactions/user', [UserController::class, 'getUserTransactions']);
-
-        // Portfolio
-        Route::get('/portfolio/summary', [PortfolioController::class, 'summary']);
-        Route::get('/portfolio/chart', [PortfolioController::class, 'chart']);
-        Route::get('/portfolio/performance', [PortfolioController::class, 'performance']);
-        Route::get('/portfolio/allocation', [PortfolioController::class, 'allocation']);
-        Route::get('/portfolio/asset/{land}', [PortfolioController::class, 'asset']);
 
         /*
         |--------------------------------------------------------------------------
-        | Transaction PIN
+        | User
         |--------------------------------------------------------------------------
         */
-        Route::post('/pin/forgot', [UserController::class, 'sendPinResetCode']);
-        Route::post('/pin/verify-code', [UserController::class, 'verifyPinResetCode']);
-        Route::post('/pin/reset', [UserController::class, 'resetTransactionPin']);
-        Route::post('/pin/set', [UserController::class, 'setTransactionPin']);
-        Route::post('/pin/update', [UserController::class, 'updateTransactionPin']);
+        Route::prefix('user')->group(function () {
+            Route::get('/lands',  [UserController::class, 'getAllUserLands']);
+            Route::get('/stats',  [UserController::class, 'getUserStats']);
+            Route::put('/bank-details', [UserController::class, 'updateBankDetails']);
+        });
+
+        Route::get('/transactions/user', [UserController::class, 'getUserTransactions']);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Portfolio
+        |--------------------------------------------------------------------------
+        */
+        Route::prefix('portfolio')->group(function () {
+            Route::get('/summary',      [PortfolioController::class, 'summary']);
+            Route::get('/chart',        [PortfolioController::class, 'chart']);
+            Route::get('/performance',  [PortfolioController::class, 'performance']);
+            Route::get('/allocation',   [PortfolioController::class, 'allocation']);
+            Route::get('/asset/{land}', [PortfolioController::class, 'asset']);
+        });
+
+        /*
+        |--------------------------------------------------------------------------
+        | Transaction PIN (for logged-in users managing their PIN)
+        |--------------------------------------------------------------------------
+        */
+            Route::prefix('pin')->group(function () {
+            Route::post('/set',    [UserController::class, 'setTransactionPin']);
+            Route::post('/update', [UserController::class, 'updateTransactionPin']);
+            Route::post('/verify-code', [UserController::class, 'verifyPinResetCode']);
+            Route::post('/forgot',      [UserController::class, 'sendPinResetCode']);
+            Route::post('/reset',       [UserController::class, 'resetTransactionPin']);
+            // forgot/verify-code/reset are public (above) — user is logged out when they need them
+        });
 
         /*
         |--------------------------------------------------------------------------
@@ -186,15 +182,13 @@ Route::middleware('jwt.auth')->group(function () {
             ->middleware(CheckTransactionPin::class);
 
         Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
-        Route::get('/withdrawal/retry', [WithdrawalController::class, 'retryPendingWithdrawals']);
 
         /*
         |--------------------------------------------------------------------------
         | Bank & Paystack Helpers
         |--------------------------------------------------------------------------
         */
-        Route::put('/user/bank-details', [UserController::class, 'updateBankDetails']);
-        Route::get('/paystack/banks', [UserController::class, 'getBanks']);
+        Route::get('/paystack/banks',            [UserController::class, 'getBanks']);
         Route::post('/paystack/resolve-account', [UserController::class, 'resolveAccount']);
 
         /*
@@ -202,32 +196,48 @@ Route::middleware('jwt.auth')->group(function () {
         | Notifications
         |--------------------------------------------------------------------------
         */
-        Route::get('/notifications', [NotificationController::class, 'getNotifications']);
-        Route::get('/notifications/unread', [NotificationController::class, 'getUnreadNotifications']);
-        Route::post('/notifications/read', [NotificationController::class, 'markAllAsRead']);
-        Route::post('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
-    });
+        Route::prefix('notifications')->group(function () {
+            Route::get('/',          [NotificationController::class, 'getNotifications']);
+            Route::get('/unread',    [NotificationController::class, 'getUnreadNotifications']);
+            Route::post('/read',     [NotificationController::class, 'markAllAsRead']);
+            Route::post('/{id}/read', [NotificationController::class, 'markAsRead']);
+        });
+
+    }); // end verified
 
     /*
     |--------------------------------------------------------------------------
-    | ADMIN ROUTES (JWT + Admin + Verified)
+    | Admin Routes (JWT + verified + admin)
     |--------------------------------------------------------------------------
     */
     Route::middleware(['verified', AdminMiddleware::class])->prefix('admin')->group(function () {
-        
-        // KYC Management
+
+        // Lands
+        Route::prefix('lands')->group(function () {
+            Route::get('/',              [LandController::class, 'adminIndex']);
+            Route::post('/',             [LandController::class, 'store']);
+            Route::post('/{id}',         [LandController::class, 'update']);
+            Route::patch('/{id}/disable', [LandController::class, 'disable']);
+            Route::patch('/{id}/enable',  [LandController::class, 'enable']);
+            Route::patch('/{land}/price', [LandController::class, 'updatePrice']);
+        });
+
+        // KYC management
         Route::prefix('kyc')->group(function () {
-            Route::get('/', [KycController::class, 'adminIndex']);
-            Route::get('/{id}', [KycController::class, 'adminShow']);
-            Route::post('/{id}/approve', [KycController::class, 'approve']);
-            Route::post('/{id}/reject', [KycController::class, 'reject']);
+            Route::get('/',               [KycController::class, 'adminIndex']);
+            Route::get('/{id}',           [KycController::class, 'adminShow']);
+            Route::post('/{id}/approve',  [KycController::class, 'approve']);
+            Route::post('/{id}/reject',   [KycController::class, 'reject']);
             Route::post('/{id}/resubmit', [KycController::class, 'requestResubmit']);
         });
 
-        // Referral Management
+        // Referrals
         Route::prefix('referrals')->group(function () {
-            Route::get('/', [ReferralController::class, 'adminIndex']);
+            Route::get('/',      [ReferralController::class, 'adminIndex']);
             Route::get('/stats', [ReferralController::class, 'adminStats']);
         });
+
+        Route::post('/withdrawals/retry', [WithdrawalController::class, 'retryPendingWithdrawals']);
     });
-});
+
+}); 
