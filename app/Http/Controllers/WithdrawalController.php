@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\Withdrawal;
+use App\Models\LedgerEntry;
 use App\Notifications\WithdrawalConfirmed;
 use App\Notifications\WithdrawalFailedNotification;
 use Illuminate\Http\Request;
@@ -23,10 +24,11 @@ class WithdrawalController extends Controller
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            'amount' => 'required|numeric|min:1000',
+            // 100000 kobo = ₦1,000
+            'amount' => 'required|integer|min:500000',
         ]);
 
-        if ($user->balance < $request->amount) {
+        if ($user->balance_kobo < $request->amount) {
             return response()->json(['error' => 'Insufficient balance'], 400);
         }
 
@@ -38,31 +40,34 @@ class WithdrawalController extends Controller
             $referenceCode = 'WD-' . now()->format('Ymd-His') . '-' . Str::random(6);
 
             Log::info('User balance before withdrawal', [
-                'user_id' => $user->id,
-                'balance' => $user->balance,
+                'user_id'           => $user->id,
+                'balance_kobo'      => $user->balance_kobo,
                 'withdrawal_amount' => $request->amount,
             ]);
 
             DB::transaction(function () use ($user, $request, $referenceCode) {
-                $user->decrement('balance', $request->amount);
+                $user->decrement('balance_kobo', $request->amount);
+
+                // Record in ledger
+                LedgerEntry::create([
+                    'uid'           => $user->id,
+                    'type'          => 'withdrawal',
+                    'amount_kobo'   => $request->amount,
+                    'balance_after' => $user->balance_kobo - $request->amount,
+                    'reference'     => $referenceCode,
+                ]);
 
                 Withdrawal::create([
-                    'user_id' => $user->id,
-                    'amount' => $request->amount,
-                    'status' => 'pending',
-                    'reference' => $referenceCode,
+                    'user_id'     => $user->id,
+                    'amount_kobo' => $request->amount,
+                    'status'      => 'pending',
+                    'reference'   => $referenceCode,
                 ]);
             });
 
             Log::info('User balance after withdrawal', [
-                'user_id' => $user->id,
-                'balance' => $user->fresh()->balance,
-            ]);
-
-            Log::info('Withdrawal initiated', [
-                'user_id' => $user->id,
-                'account_number' => $user->account_number,
-                'bank_code' => $user->bank_code,
+                'user_id'      => $user->id,
+                'balance_kobo' => $user->fresh()->balance_kobo,
             ]);
 
             if (config('services.paystack.test_mode')) {
@@ -72,15 +77,15 @@ class WithdrawalController extends Controller
             $this->initiatePaystackTransfer($user, $request->amount, $referenceCode);
 
             return response()->json([
-                'message' => 'Withdrawal request initiated',
+                'message'   => 'Withdrawal request initiated',
                 'reference' => $referenceCode,
             ], 200);
 
         } catch (\Exception $e) {
             Log::error('Withdrawal request failed', [
-                'error' => $e->getMessage(),
+                'error'   => $e->getMessage(),
                 'user_id' => $user->id,
-                'amount' => $request->amount,
+                'amount'  => $request->amount,
             ]);
 
             return response()->json(['error' => 'Failed to initiate withdrawal'], 500);
@@ -97,35 +102,35 @@ class WithdrawalController extends Controller
         $this->handlePaystackCallback(new Request([
             'data' => [
                 'reference' => $referenceCode,
-                'status' => 'success',
-            ]
+                'status'    => 'success',
+            ],
         ]));
 
         return response()->json([
-            'message' => 'Test mode withdrawal successful',
+            'message'   => 'Test mode withdrawal successful',
             'reference' => $referenceCode,
-            'status' => 'success',
+            'status'    => 'success',
         ], 200);
     }
 
     /**
      * Initiate Paystack transfer
      */
-    protected function initiatePaystackTransfer($user, $amount, $referenceCode)
+    protected function initiatePaystackTransfer($user, int $amountKobo, $referenceCode)
     {
         Log::info('Initiating transfer with Paystack', [
             'account_number' => $user->account_number,
-            'bank_code' => $user->bank_code,
-            'amount' => $amount,
-            'reference' => $referenceCode,
+            'bank_code'      => $user->bank_code,
+            'amount_kobo'    => $amountKobo,
+            'reference'      => $referenceCode,
         ]);
 
         $recipientCode = $this->getOrCreatePaystackRecipient($user);
 
         $transferResponse = Http::withToken(config('services.paystack.secret_key'))
             ->post('https://api.paystack.co/transfer', [
-                'source' => 'balance',
-                'amount' => $amount * 100,
+                'source'    => 'balance',
+                'amount'    => $amountKobo, 
                 'recipient' => $recipientCode,
                 'reference' => $referenceCode,
             ]);
@@ -144,11 +149,11 @@ class WithdrawalController extends Controller
     {
         $recipientResponse = Http::withToken(config('services.paystack.secret_key'))
             ->post('https://api.paystack.co/transferrecipient', [
-                'type' => 'nuban',
-                'name' => $user->name,
+                'type'           => 'nuban',
+                'name'           => $user->name,
                 'account_number' => $user->account_number,
-                'bank_code' => $user->bank_code,
-                'currency' => 'NGN',
+                'bank_code'      => $user->bank_code,
+                'currency'       => 'NGN',
             ]);
 
         if (!$recipientResponse->successful()) {
@@ -167,7 +172,7 @@ class WithdrawalController extends Controller
     public function handlePaystackCallback(Request $request)
     {
         if (!config('services.paystack.test_mode')) {
-            $payload = file_get_contents('php://input');
+            $payload   = file_get_contents('php://input');
             $signature = $request->header('x-paystack-signature');
 
             if (!hash_equals(hash_hmac('sha512', $payload, config('services.paystack.webhook_secret')), $signature)) {
@@ -177,7 +182,7 @@ class WithdrawalController extends Controller
         }
 
         $reference = $request->input('data.reference');
-        $status = $request->input('data.status');
+        $status    = $request->input('data.status');
 
         $withdrawal = Withdrawal::firstWhere('reference', $reference);
 
@@ -195,32 +200,32 @@ class WithdrawalController extends Controller
 
                 try {
                     $withdrawal->user->notify(new WithdrawalConfirmed($withdrawal));
-                    Log::info('Withdrawal confirmation notification sent', [
-                        'user_id' => $withdrawal->user->id,
-                        'amount' => $withdrawal->amount,
-                        'reference' => $withdrawal->reference,
-                    ]);
                 } catch (\Exception $e) {
-                    Log::warning('Withdrawal succeeded but email failed', [
-                        'error' => $e->getMessage(),
+                    Log::warning('Withdrawal succeeded but notification failed', [
+                        'error'   => $e->getMessage(),
                         'user_id' => $withdrawal->user->id,
                     ]);
                 }
 
             } elseif ($status === 'failed') {
-                $withdrawal->user->increment('balance', $withdrawal->amount);
+                $withdrawal->user->increment('balance_kobo', $withdrawal->amount_kobo);
+
+                // Restore in ledger
+                LedgerEntry::create([
+                    'uid'           => $withdrawal->user->id,
+                    'type'          => 'withdrawal_reversal',
+                    'amount_kobo'   => $withdrawal->amount_kobo,
+                    'balance_after' => $withdrawal->user->fresh()->balance_kobo,
+                    'reference'     => $withdrawal->reference . '-REVERSAL',
+                ]);
+
                 $withdrawal->update(['status' => 'failed']);
 
                 try {
                     $withdrawal->user->notify(new WithdrawalFailedNotification($withdrawal));
-                    Log::info('Withdrawal failure notification sent', [
-                        'user_id' => $withdrawal->user->id,
-                        'amount' => $withdrawal->amount,
-                        'reference' => $withdrawal->reference,
-                    ]);
                 } catch (\Exception $e) {
-                    Log::warning('Withdrawal failed and email could not be sent', [
-                        'error' => $e->getMessage(),
+                    Log::warning('Withdrawal failed and notification could not be sent', [
+                        'error'   => $e->getMessage(),
                         'user_id' => $withdrawal->user->id,
                     ]);
                 }
@@ -238,18 +243,16 @@ class WithdrawalController extends Controller
      */
     public function getWithdrawalStatus($reference)
     {
-        Log::info("Checking withdrawal status for reference: " . $reference);
-
         $withdrawal = Withdrawal::firstWhere('reference', $reference);
 
         if (!$withdrawal) {
-            Log::error("Withdrawal not found", ['reference' => $reference]);
             return response()->json(['error' => 'Withdrawal not found'], 404);
         }
 
         return response()->json([
-            'status' => $withdrawal->status,
-            'amount' => $withdrawal->amount,
+            'status'       => $withdrawal->status,
+            'amount'       => $withdrawal->amount_kobo / 100, 
+            'amount_kobo'  => $withdrawal->amount_kobo,
             'requested_at' => $withdrawal->created_at,
             'completed_at' => $withdrawal->updated_at,
         ], 200);
@@ -263,13 +266,8 @@ class WithdrawalController extends Controller
         $pendingWithdrawals = Withdrawal::where('status', 'pending')->get();
 
         if ($pendingWithdrawals->isEmpty()) {
-            Log::info('No pending withdrawals to retry');
             return response()->json(['message' => 'No pending withdrawals to retry'], 200);
         }
-
-        Log::info('Pending withdrawals found', [
-            'count' => $pendingWithdrawals->count(),
-        ]);
 
         foreach ($pendingWithdrawals as $withdrawal) {
             if (!$withdrawal->reference) {
@@ -280,21 +278,13 @@ class WithdrawalController extends Controller
             }
 
             try {
-                Log::info('Retrying withdrawal', [
-                    'withdrawal_id' => $withdrawal->id,
-                    'user_id' => $withdrawal->user_id,
-                    'amount' => $withdrawal->amount,
-                    'reference' => $withdrawal->reference,
-                ]);
-
-                $this->initiatePaystackTransfer($withdrawal->user, $withdrawal->amount, $withdrawal->reference);
-
+                $this->initiatePaystackTransfer($withdrawal->user, $withdrawal->amount_kobo, $withdrawal->reference);
                 Log::info('Withdrawal retried successfully', ['reference' => $withdrawal->reference]);
             } catch (\Exception $e) {
                 Log::error('Failed to retry withdrawal', [
                     'withdrawal_id' => $withdrawal->id,
-                    'reference' => $withdrawal->reference,
-                    'error' => $e->getMessage(),
+                    'reference'     => $withdrawal->reference,
+                    'error'         => $e->getMessage(),
                 ]);
             }
         }

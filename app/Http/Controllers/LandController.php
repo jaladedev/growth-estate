@@ -426,13 +426,11 @@ class LandController extends Controller
             $land = Land::with(['images', 'latestPrice'])->find($id);
             if (!$land) return null;
 
-            // Convert PostGIS geometry to GeoJSON for frontend
-            $polygon = null;
-            $point = null;
+            $polygon      = null;
+            $point        = null;
             $geometryType = null;
 
             if ($land->coordinates) {
-                // Get GeoJSON from PostGIS
                 $geoJson = DB::selectOne(
                     "SELECT ST_AsGeoJSON(coordinates) as geojson FROM lands WHERE id = ?",
                     [$land->id]
@@ -440,19 +438,19 @@ class LandController extends Controller
 
                 if ($geoJson && $geoJson->geojson) {
                     $coords = json_decode($geoJson->geojson, true);
-                    
+
                     if ($coords && isset($coords['type'])) {
                         $geometryType = $coords['type'];
 
                         if ($coords['type'] === 'Polygon' && isset($coords['coordinates'][0])) {
                             $polygon = array_map(
-                                fn($p) => ['lat' => $p[1], 'lng' => $p[0]], 
+                                fn($p) => ['lat' => $p[1], 'lng' => $p[0]],
                                 $coords['coordinates'][0]
                             );
                         } elseif ($coords['type'] === 'Point' && isset($coords['coordinates'])) {
                             $point = [
                                 'lat' => $coords['coordinates'][1],
-                                'lng' => $coords['coordinates'][0]
+                                'lng' => $coords['coordinates'][0],
                             ];
                         }
                     }
@@ -460,31 +458,34 @@ class LandController extends Controller
             }
 
             $payload = [
-                'id' => $land->id,
-                'title' => $land->title,
-                'location' => $land->location,
-                'size' => $land->size,
-                'is_available' => $land->is_available,
-                'price_per_unit_kobo' => $land->current_price_per_unit_kobo,
-                'total_units' => $land->total_units,
-                'available_units' => $land->available_units,
-                'units_sold' => $land->units_sold,
-                'sold_percentage' => $land->sold_percentage,
-                'lat' => $land->lat,
-                'lng' => $land->lng,
-                'geometry_type' => $geometryType,
-                'polygon' => $polygon,
-                'point' => $point,
-                'has_polygon' => !is_null($polygon),
-                'has_point' => !is_null($point),
+                'id'                    => $land->id,
+                'title'                 => $land->title,
+                'location'              => $land->location,
+                'size'                  => $land->size,
+                'is_available'          => $land->is_available,
+                'price_per_unit_kobo'   => $land->current_price_per_unit_kobo,
+                'total_units'           => $land->total_units,
+                'available_units'       => $land->available_units,
+                'units_sold'            => $land->units_sold,
+                'sold_percentage'       => $land->sold_percentage,
+                'lat'                   => $land->lat,
+                'lng'                   => $land->lng,
+                'geometry_type'         => $geometryType,
+                'polygon'               => $polygon,
+                'point'                 => $point,
+                'has_polygon'           => !is_null($polygon),
+                'has_point'             => !is_null($point),
             ];
 
-            return $map ? $payload : $payload + [
+            if ($map) {
+                return $payload;
+            }
+
+            return $payload + [
                 'description' => $land->description,
-                'images' => $land->images->map(fn($i) => ['id' => $i->id, 'url' => Storage::url($i->image_path)]),
-                'images' => $land->images->map(fn($i) => [
-                    'id' => $i->id, 
-                    'url' => $i->image_url  
+                'images'      => $land->images->map(fn($i) => [
+                    'id'  => $i->id,
+                    'url' => $i->image_url,
                 ]),
             ];
         });
