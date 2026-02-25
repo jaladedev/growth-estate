@@ -11,6 +11,7 @@ use App\Http\Controllers\PortfolioController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PaystackWebhookController;
 use App\Http\Controllers\MonnifyWebhookController;
+use App\Http\Controllers\SupportController;
 use App\Http\Controllers\KycController;
 use App\Http\Controllers\ReferralController;
 use App\Http\Middleware\CheckTransactionPin;
@@ -24,11 +25,11 @@ use App\Http\Middleware\AdminMiddleware;
 
 // Auth
 Route::post('/register', [AuthController::class, 'register']);
-Route::post('/login', [AuthController::class, 'login']);
+Route::post('/login',    [AuthController::class, 'login']);
 
 // Email verification
-Route::post('/email/verify/code', [AuthController::class, 'verifyEmailCode']);
-Route::post('/email/resend-verification', [AuthController::class, 'resendVerificationEmail']);
+Route::post('/email/verify/code',           [AuthController::class, 'verifyEmailCode']);
+Route::post('/email/resend-verification',   [AuthController::class, 'resendVerificationEmail']);
 
 // Password reset
 Route::prefix('password')->group(function () {
@@ -37,7 +38,7 @@ Route::prefix('password')->group(function () {
     Route::post('/reset',        [AuthController::class, 'resetPassword']);
 });
 
-// Public referral code validation (for registration page)
+// Public referral code validation
 Route::post('/referrals/validate', [ReferralController::class, 'validateCode']);
 
 // Public land listing
@@ -45,7 +46,22 @@ Route::get('/land', [LandController::class, 'index']);
 
 /*
 |--------------------------------------------------------------------------
-| Webhooks — no auth, no throttle, signature-verified internally
+| Guest Support Routes — no auth required
+|
+| - FAQs:            Fully public, cached server-side.
+| - Guest tickets:   Email required in body (guests have no account).
+|                    Rate-limited to prevent spam.
+|--------------------------------------------------------------------------
+*/
+Route::prefix('support')->group(function () {
+    Route::get('/faqs',          [SupportController::class, 'faqs']);
+    Route::post('/tickets/guest', [SupportController::class, 'storeGuestTicket'])
+        ->middleware('throttle:5,60'); // max 5 tickets per IP per hour
+});
+
+/*
+|--------------------------------------------------------------------------
+| Webhooks — no auth, signature-verified internally
 |--------------------------------------------------------------------------
 */
 Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle'])
@@ -69,59 +85,63 @@ Route::middleware('jwt.auth')->group(function () {
 
     /*
     |--------------------------------------------------------------------------
+    | Support — all authenticated users (no email verification required)
+    |--------------------------------------------------------------------------
+    */
+    Route::prefix('support')->group(function () {
+        Route::post('/chat',                   [SupportController::class, 'chat']);
+        Route::get('/tickets',                 [SupportController::class, 'indexTickets']);
+        Route::post('/tickets',                [SupportController::class, 'storeTicket']);
+        Route::get('/tickets/{ticket}',        [SupportController::class, 'showTicket']);
+        Route::post('/tickets/{ticket}/reply', [SupportController::class, 'replyTicket']);
+    });
+
+    /*
+    |--------------------------------------------------------------------------
     | Verified email required for all routes below
     |--------------------------------------------------------------------------
     */
     Route::middleware('verified')->group(function () {
 
         // Auth
-        Route::post('/logout',              [AuthController::class, 'logout']);
+        Route::post('/logout',               [AuthController::class, 'logout']);
         Route::post('/user/change-password', [AuthController::class, 'changePassword']);
 
         /*
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         | KYC
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         */
         Route::prefix('kyc')->group(function () {
             Route::get('/status',  [KycController::class, 'status']);
             Route::post('/submit', [KycController::class, 'submit']);
 
-            // Authenticated image endpoint from security fixes.
-            // Returns a 5-minute signed URL for a KYC document.
-            // Enforces owner-or-admin check inside the controller.
             Route::get('/{id}/image/{imageType}', [KycController::class, 'getImageUrl'])
                 ->name('kyc.image')
                 ->where('imageType', 'id_front|id_back|selfie');
         });
 
         /*
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         | Referrals
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         */
         Route::prefix('referrals')->group(function () {
-            Route::get('/dashboard',              [ReferralController::class, 'dashboard']);
-            Route::get('/rewards',                [ReferralController::class, 'availableRewards']);
+            Route::get('/dashboard',                 [ReferralController::class, 'dashboard']);
+            Route::get('/rewards',                   [ReferralController::class, 'availableRewards']);
             Route::post('/rewards/{rewardId}/claim', [ReferralController::class, 'claimReward']);
         });
 
         /*
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         | Lands
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         */
         Route::prefix('lands')->group(function () {
-
-            // FIX 4: /lands/map was nested as /lands/lands/map due to
-            // being inside the 'lands' prefix group. Fixed the path.
-            Route::get('/map', [LandController::class, 'mapIndex']);
-
-            // Listings & detail
+            Route::get('/map',  [LandController::class, 'mapIndex']);
             Route::get('/',     [LandController::class, 'index']);
             Route::get('/{id}', [LandController::class, 'show']);
 
-            // User actions — require transaction PIN
             Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])
                 ->middleware(CheckTransactionPin::class);
 
@@ -132,22 +152,22 @@ Route::middleware('jwt.auth')->group(function () {
         });
 
         /*
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         | User
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         */
         Route::prefix('user')->group(function () {
-            Route::get('/lands',  [UserController::class, 'getAllUserLands']);
-            Route::get('/stats',  [UserController::class, 'getUserStats']);
+            Route::get('/lands',        [UserController::class, 'getAllUserLands']);
+            Route::get('/stats',        [UserController::class, 'getUserStats']);
             Route::put('/bank-details', [UserController::class, 'updateBankDetails']);
         });
 
         Route::get('/transactions/user', [UserController::class, 'getUserTransactions']);
 
         /*
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         | Portfolio
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         */
         Route::prefix('portfolio')->group(function () {
             Route::get('/summary',      [PortfolioController::class, 'summary']);
@@ -158,23 +178,22 @@ Route::middleware('jwt.auth')->group(function () {
         });
 
         /*
-        |--------------------------------------------------------------------------
-        | Transaction PIN (for logged-in users managing their PIN)
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
+        | Transaction PIN
+        |----------------------------------------------------------------------
         */
-            Route::prefix('pin')->group(function () {
-            Route::post('/set',    [UserController::class, 'setTransactionPin']);
-            Route::post('/update', [UserController::class, 'updateTransactionPin']);
+        Route::prefix('pin')->group(function () {
+            Route::post('/set',         [UserController::class, 'setTransactionPin']);
+            Route::post('/update',      [UserController::class, 'updateTransactionPin']);
             Route::post('/verify-code', [UserController::class, 'verifyPinResetCode']);
             Route::post('/forgot',      [UserController::class, 'sendPinResetCode']);
             Route::post('/reset',       [UserController::class, 'resetTransactionPin']);
-            // forgot/verify-code/reset are public (above) — user is logged out when they need them
         });
 
         /*
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         | Deposits & Withdrawals
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         */
         Route::post('/deposit', [DepositController::class, 'initiateDeposit']);
 
@@ -184,22 +203,22 @@ Route::middleware('jwt.auth')->group(function () {
         Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
 
         /*
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         | Bank & Paystack Helpers
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         */
         Route::get('/paystack/banks',            [UserController::class, 'getBanks']);
         Route::post('/paystack/resolve-account', [UserController::class, 'resolveAccount']);
 
         /*
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         | Notifications
-        |--------------------------------------------------------------------------
+        |----------------------------------------------------------------------
         */
         Route::prefix('notifications')->group(function () {
-            Route::get('/',          [NotificationController::class, 'getNotifications']);
-            Route::get('/unread',    [NotificationController::class, 'getUnreadNotifications']);
-            Route::post('/read',     [NotificationController::class, 'markAllAsRead']);
+            Route::get('/',           [NotificationController::class, 'getNotifications']);
+            Route::get('/unread',     [NotificationController::class, 'getUnreadNotifications']);
+            Route::post('/read',      [NotificationController::class, 'markAllAsRead']);
             Route::post('/{id}/read', [NotificationController::class, 'markAsRead']);
         });
 
@@ -212,17 +231,15 @@ Route::middleware('jwt.auth')->group(function () {
     */
     Route::middleware(['verified', AdminMiddleware::class])->prefix('admin')->group(function () {
 
-        // Lands
         Route::prefix('lands')->group(function () {
-            Route::get('/',              [LandController::class, 'adminIndex']);
-            Route::post('/',             [LandController::class, 'store']);
-            Route::post('/{id}',         [LandController::class, 'update']);
+            Route::get('/',               [LandController::class, 'adminIndex']);
+            Route::post('/',              [LandController::class, 'store']);
+            Route::post('/{id}',          [LandController::class, 'update']);
             Route::patch('/{id}/disable', [LandController::class, 'disable']);
             Route::patch('/{id}/enable',  [LandController::class, 'enable']);
             Route::patch('/{land}/price', [LandController::class, 'updatePrice']);
         });
 
-        // KYC management
         Route::prefix('kyc')->group(function () {
             Route::get('/',               [KycController::class, 'adminIndex']);
             Route::get('/{id}',           [KycController::class, 'adminShow']);
@@ -231,7 +248,6 @@ Route::middleware('jwt.auth')->group(function () {
             Route::post('/{id}/resubmit', [KycController::class, 'requestResubmit']);
         });
 
-        // Referrals
         Route::prefix('referrals')->group(function () {
             Route::get('/',      [ReferralController::class, 'adminIndex']);
             Route::get('/stats', [ReferralController::class, 'adminStats']);
