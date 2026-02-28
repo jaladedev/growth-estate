@@ -1,6 +1,5 @@
 <?php
 
-
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -10,10 +9,22 @@ class Withdrawal extends Model
 {
     use HasFactory;
 
-    // Define the table name if it’s different from the plural of the model name
+    // ── Status constants ──────────────────────────────────────────────────────
+    const STATUS_PENDING    = 'pending';
+    const STATUS_PROCESSING = 'processing';
+    const STATUS_COMPLETED  = 'completed';
+    const STATUS_FAILED     = 'failed';
+
+    /** Statuses that are terminal — no further processing should occur. */
+    const TERMINAL_STATUSES = [
+        self::STATUS_COMPLETED,
+        self::STATUS_FAILED,
+    ];
+
+    // ── Table / fillable ──────────────────────────────────────────────────────
+
     protected $table = 'withdrawals';
 
-    // Mass assignable attributes
     protected $fillable = [
         'user_id',
         'reference',
@@ -22,35 +33,74 @@ class Withdrawal extends Model
         'gateway',
     ];
 
-    /**
-     * Relationship to the User model
-     */
+    protected $attributes = [
+        'status' => self::STATUS_PENDING,
+    ];
+
+    protected $casts = [
+        'amount_kobo' => 'integer',
+    ];
+
+    // ── Relationships ─────────────────────────────────────────────────────────
+
     public function user()
     {
         return $this->belongsTo(User::class);
     }
 
-    /**
-     * Scope for completed withdrawals
-     */
-    public function scopeCompleted($query)
+    // ── Status helpers ────────────────────────────────────────────────────────
+
+    public function isPending(): bool
     {
-        return $query->where('status', 'completed');
+        return $this->status === self::STATUS_PENDING;
     }
 
-    /**
-     * Scope for pending deposits
-     */
+    public function isProcessing(): bool
+    {
+        return $this->status === self::STATUS_PROCESSING;
+    }
+
+    public function isCompleted(): bool
+    {
+        return $this->status === self::STATUS_COMPLETED;
+    }
+
+    public function isFailed(): bool
+    {
+        return $this->status === self::STATUS_FAILED;
+    }
+
+    public function isTerminal(): bool
+    {
+        return in_array($this->status, self::TERMINAL_STATUSES, true);
+    }
+
+    // ── Scopes ────────────────────────────────────────────────────────────────
+
     public function scopePending($query)
     {
-        return $query->where('status', 'pending');
+        return $query->where('status', self::STATUS_PENDING);
     }
 
-    /**
-     * Scope for failed deposits
-     */
+    public function scopeProcessing($query)
+    {
+        return $query->where('status', self::STATUS_PROCESSING);
+    }
+
+    public function scopeCompleted($query)
+    {
+        return $query->where('status', self::STATUS_COMPLETED);
+    }
+
     public function scopeFailed($query)
     {
-        return $query->where('status', 'failed');
+        return $query->where('status', self::STATUS_FAILED);
+    }
+
+    // ── Accessors ─────────────────────────────────────────────────────────────
+
+    public function getAmountNairaAttribute(): float
+    {
+        return $this->amount_kobo / 100;
     }
 }
