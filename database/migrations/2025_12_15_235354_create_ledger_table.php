@@ -22,6 +22,9 @@ return new class extends Migration
             'purchase',
             'sale',
             'adjustment',
+            'withdrawal_reversal',
+            'reward_credit',
+            'reward_spend',
             'transaction_fee',
         ]);
 

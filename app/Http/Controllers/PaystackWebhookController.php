@@ -87,9 +87,9 @@ class PaystackWebhookController extends Controller
             LedgerEntry::create([
                 'uid'       => $user->id,
                 'type'          => 'transaction_fee',
-                'amount_kobo'   => $lockedDeposit->transaction_fee,
+                'amount_kobo'   => $deposit->transaction_fee,
                 'balance_after' => $user->balance_kobo,
-                'reference'     => $lockedDeposit->reference,
+                'reference'     => $deposit->reference,
             ]);
 
             $deposit->update([
