@@ -2,39 +2,48 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Land;
-use App\Models\Transaction;
-use App\Models\Purchase;
-use App\Models\UserLand;
-use App\Models\LedgerEntry;
 use App\Events\LandUnitsPurchased;
 use App\Events\LandUnitsSold;
+use App\Models\Land;
+use App\Models\LedgerEntry;
+use App\Models\Purchase;
 use App\Models\Referral;
 use App\Models\ReferralReward;
+use App\Models\Transaction;
+use App\Models\User;
+use App\Models\UserLand;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use Illuminate\Validation\ValidationException;
 use Tymon\JWTAuth\Facades\JWTAuth;
+use Illuminate\Validation\ValidationException;
 
 class PurchaseController extends Controller
 {
     /**
-     * BUY LAND UNITS
+     * PURCHASE LAND UNITS
+     *
+     * Payment priority:
+     *   1. Rewards balance is applied first (up to the full cost).
+     *   2. Remaining cost is taken from the main wallet balance.
+     *
+     * The `use_rewards` flag (default true) lets the frontend opt out if needed.
      */
     public function purchase(Request $request, $landId)
     {
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            'units' => ['required', 'integer', 'min:1'],
+            'units'       => ['required', 'integer', 'min:1'],
+            'use_rewards' => ['sometimes', 'boolean'],
         ]);
 
-        try {
-            return DB::transaction(function () use ($request, $landId, $user) {
+        $useRewards = $request->boolean('use_rewards', true);
 
-                /** Lock land */
+        try {
+            return DB::transaction(function () use ($request, $landId, $user, $useRewards) {
+
                 $land = Land::lockForUpdate()->findOrFail($landId);
 
                 if (! $land->is_available || $land->available_units < $request->units) {
@@ -43,11 +52,21 @@ class PurchaseController extends Controller
                     ]);
                 }
 
-                /** Pricing (kobo) */
                 $pricePerUnit = $land->current_price_per_unit_kobo;
                 $totalCost    = $pricePerUnit * $request->units;
 
-                if ($user->balance_kobo < $totalCost) {
+                // ── Rewards split ────────────────────────────────────────────
+                $rewardsUsed = 0;
+                $mainUsed    = $totalCost;
+
+                if ($useRewards && $user->rewards_balance_kobo > 0) {
+                    $rewardsUsed = min($user->rewards_balance_kobo, $totalCost);
+                    $mainUsed    = $totalCost - $rewardsUsed;
+                }
+                // ─────────────────────────────────────────────────────────────
+
+                // Check combined affordability
+                if ($user->balance_kobo < $mainUsed) {
                     throw ValidationException::withMessages([
                         'wallet' => 'Insufficient wallet balance',
                     ]);
@@ -55,25 +74,33 @@ class PurchaseController extends Controller
 
                 $reference = 'PUR-' . Str::uuid();
 
-                $balanceAfter = $user->balance_kobo - $totalCost;
-                $user->decrement('balance_kobo', $totalCost);
+                // Debit rewards wallet first
+                if ($rewardsUsed > 0) {
+                    $user->spendRewards($rewardsUsed, $reference, "Purchase: {$land->title}");
+                }
 
-                LedgerEntry::create([
-                    'uid'          => $user->id,
-                    'type'         => 'withdrawal',
-                    'amount_kobo'  => $totalCost,
-                    'balance_after' => $balanceAfter,   
-                    'reference'    => $reference,
-                ]);
+                // Debit main wallet for remainder
+                if ($mainUsed > 0) {
+                    $user->decrement('balance_kobo', $mainUsed);
+                    $balanceAfter = $user->fresh()->balance_kobo;
 
-                /** Update land */
+                    LedgerEntry::create([
+                        'uid'           => $user->id,
+                        'type'          => 'withdrawal',
+                        'amount_kobo'   => $mainUsed,
+                        'balance_after' => $balanceAfter,
+                        'reference'     => $reference,
+                    ]);
+                }
+
+                // Update land availability
                 $land->decrement('available_units', $request->units);
                 $land->is_available = $land->available_units > 0;
                 $land->save();
 
                 $isFirstPurchase = ! Purchase::where('user_id', $user->id)->exists();
 
-                /** Purchase summary */
+                // Purchase summary (upsert)
                 $purchase = Purchase::lockForUpdate()->firstOrCreate(
                     ['user_id' => $user->id, 'land_id' => $land->id],
                     [
@@ -88,17 +115,17 @@ class PurchaseController extends Controller
 
                 $purchase->increment('units', $request->units);
                 $purchase->increment('total_amount_paid_kobo', $totalCost);
-                $purchase->reference     = $reference;
+                $purchase->reference    = $reference;
                 $purchase->purchase_date = now();
                 $purchase->save();
 
-                /** Portfolio (source of truth) */
+                // Portfolio (source of truth)
                 UserLand::firstOrCreate(
                     ['user_id' => $user->id, 'land_id' => $land->id],
                     ['units' => 0]
                 )->increment('units', $request->units);
 
-                /** Transaction log */
+                // Transaction log
                 Transaction::create([
                     'user_id'          => $user->id,
                     'land_id'          => $land->id,
@@ -114,7 +141,6 @@ class PurchaseController extends Controller
                     $this->completeReferral($user);
                 }
 
-                /** Event (fires AFTER commit automatically) */
                 event(new LandUnitsPurchased(
                     $user->id,
                     $land->id,
@@ -124,12 +150,15 @@ class PurchaseController extends Controller
                 ));
 
                 return response()->json([
-                    'message'         => 'Purchase successful',
-                    'reference'       => $reference,
-                    'amount_paid_kobo' => $totalCost,
-                    'remaining_units' => $land->available_units,
+                    'message'              => 'Purchase successful',
+                    'reference'            => $reference,
+                    'total_cost_kobo'      => $totalCost,
+                    'paid_from_rewards_kobo' => $rewardsUsed,
+                    'paid_from_wallet_kobo'  => $mainUsed,
+                    'remaining_units'      => $land->available_units,
                 ]);
             });
+
         } catch (\Throwable $e) {
             Log::error('Purchase failed', [
                 'error'   => $e->getMessage(),
@@ -170,10 +199,9 @@ class PurchaseController extends Controller
 
                 $pricePerUnit  = $land->current_price_per_unit_kobo;
                 $totalReceived = $pricePerUnit * $request->units;
+                $reference     = 'SALE-' . Str::uuid();
 
-                $reference = 'SALE-' . Str::uuid();
-
-                /** Update purchase */
+                // Update purchase record
                 $purchase->decrement('units', $request->units);
                 $purchase->increment('units_sold', $request->units);
                 $purchase->increment('total_amount_received_kobo', $totalReceived);
@@ -182,28 +210,29 @@ class PurchaseController extends Controller
                 $purchase->reference = $reference;
                 $purchase->save();
 
-                /** Restore land */
+                // Restore land units
                 $land->increment('available_units', $request->units);
                 $land->is_available = true;
                 $land->save();
 
-                $balanceAfter = $user->balance_kobo + $totalReceived;
+                // Credit main wallet (sale proceeds are never rewards)
                 $user->increment('balance_kobo', $totalReceived);
+                $balanceAfter = $user->fresh()->balance_kobo;
 
                 LedgerEntry::create([
-                    'uid'          => $user->id,
-                    'type'         => 'deposit',
-                    'amount_kobo'  => $totalReceived,
-                    'balance_after' => $balanceAfter,   
-                    'reference'    => $reference,
+                    'uid'           => $user->id,
+                    'type'          => 'deposit',
+                    'amount_kobo'   => $totalReceived,
+                    'balance_after' => $balanceAfter,
+                    'reference'     => $reference,
                 ]);
 
-                /** Portfolio */
+                // Portfolio
                 UserLand::where('user_id', $user->id)
                     ->where('land_id', $land->id)
                     ->decrement('units', $request->units);
 
-                /** Transaction log */
+                // Transaction log
                 Transaction::create([
                     'user_id'          => $user->id,
                     'land_id'          => $land->id,
@@ -215,7 +244,6 @@ class PurchaseController extends Controller
                     'transaction_date' => now(),
                 ]);
 
-                /** Event */
                 event(new LandUnitsSold(
                     $user->id,
                     $land->id,
@@ -225,12 +253,13 @@ class PurchaseController extends Controller
                 ));
 
                 return response()->json([
-                    'message'            => 'Units sold successfully',
-                    'reference'          => $reference,
-                    'amount_received_kobo' => $totalReceived,
-                    'available_units'    => $land->available_units,
+                    'message'                => 'Units sold successfully',
+                    'reference'              => $reference,
+                    'amount_received_kobo'   => $totalReceived,
+                    'available_units'        => $land->available_units,
                 ]);
             });
+
         } catch (\Throwable $e) {
             Log::error('Sale failed', [
                 'error'   => $e->getMessage(),
@@ -242,7 +271,7 @@ class PurchaseController extends Controller
         }
     }
 
-    private function completeReferral($referredUser)
+    private function completeReferral($referredUser): void
     {
         $referral = Referral::where('referred_user_id', $referredUser->id)
             ->where('status', 'pending')
@@ -259,16 +288,16 @@ class PurchaseController extends Controller
                     'completed_at' => now(),
                 ]);
 
-                // Reward for referrer
+                // Referrer gets cashback to rewards wallet
                 ReferralReward::create([
-                    'referral_id'  => $referral->id,
-                    'user_id'      => $referral->referrer_id,
-                    'reward_type'  => 'cashback',
-                    'amount_kobo'  => 5000, // ₦50
-                    'claimed'      => false,
+                    'referral_id' => $referral->id,
+                    'user_id'     => $referral->referrer_id,
+                    'reward_type' => 'cashback',
+                    'amount_kobo' => 5000, // ₦50
+                    'claimed'     => false,
                 ]);
 
-                // Reward for referred user
+                // Referred user gets discount reward
                 ReferralReward::create([
                     'referral_id'         => $referral->id,
                     'user_id'             => $referral->referred_user_id,

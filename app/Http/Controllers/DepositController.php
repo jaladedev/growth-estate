@@ -3,27 +3,23 @@
 namespace App\Http\Controllers;
 
 use App\Models\Deposit;
+use App\Services\Payments\DepositService;
+use App\Services\Payments\MonnifyService;
+use App\Services\Payments\PaystackService;
 use Illuminate\Http\Request;
 use Tymon\JWTAuth\Facades\JWTAuth;
-use App\Services\Payments\DepositService;
-use App\Services\Payments\PaystackService;
-use App\Services\Payments\MonnifyService;
 
 class DepositController extends Controller
 {
-    /**
-     * Initiate deposit
-     */
     public function initiateDeposit(Request $request)
     {
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            'amount'   => 'required|numeric|min:1',
+            'amount'  => 'required|integer|min:10000|max:1000000000',
             'gateway' => 'required|in:paystack,monnify',
         ]);
 
-        // Create deposit WITH gateway
         $deposit = DepositService::createDeposit(
             $user,
             $request->amount,
@@ -33,7 +29,6 @@ class DepositController extends Controller
         $callbackUrl = config('app.frontend_url') . "/wallet?reference={$deposit->reference}";
 
         if ($deposit->gateway === 'paystack') {
-
             $response = PaystackService::initialize(
                 $user->email,
                 $deposit->total_kobo,
@@ -44,7 +39,6 @@ class DepositController extends Controller
             $paymentUrl = $response['data']['authorization_url'] ?? null;
 
         } else { // monnify
-
             $response = MonnifyService::initialize(
                 $user->email,
                 $deposit->reference,
@@ -58,7 +52,7 @@ class DepositController extends Controller
 
         if (! $paymentUrl) {
             return response()->json([
-                'error' => 'Payment initialization failed'
+                'error' => 'Payment initialization failed',
             ], 500);
         }
 
@@ -71,9 +65,6 @@ class DepositController extends Controller
         ]);
     }
 
-    /**
-     * Frontend status check
-     */
     public function verifyDeposit(string $reference)
     {
         $deposit = Deposit::where('reference', $reference)->first();

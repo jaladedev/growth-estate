@@ -6,16 +6,14 @@ use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
-use Illuminate\Validation\ValidationException;
 
 class CheckTransactionPin
 {
     public function handle(Request $request, Closure $next)
     {
-        $user = auth()->user();
+        $user = $request->user();
 
-        // Ensure user exists and has a PIN
-        if (!$user || !$user->transaction_pin) {
+        if (! $user || ! $user->transaction_pin) {
             return response()->json([
                 'success' => false,
                 'message' => 'Transaction PIN not set. Please create a PIN first.',
@@ -24,8 +22,7 @@ class CheckTransactionPin
 
         $pin = $request->input('transaction_pin');
 
-        // Ensure PIN is provided
-        if (!$pin) {
+        if (! $pin) {
             return response()->json([
                 'success' => false,
                 'message' => 'Transaction PIN is required.',
@@ -34,24 +31,28 @@ class CheckTransactionPin
 
         $key = 'pin-attempts:' . $user->id;
 
-        // Rate limiting to prevent brute-force
         if (RateLimiter::tooManyAttempts($key, 5)) {
+            $seconds = RateLimiter::availableIn($key);
+
             return response()->json([
-                'success' => false,
-                'message' => 'Too many failed attempts. Please try again later.',
+                'success'     => false,
+                'message'     => 'Too many failed PIN attempts. Please try again later.',
+                'retry_after' => $seconds,
             ], 429);
         }
 
-        // Verify the PIN
-        if (!Hash::check($pin, $user->transaction_pin)) {
-            RateLimiter::hit($key, 60); // Lock for 60 seconds after failed attempt
+        if (! Hash::check($pin, $user->transaction_pin)) {
+            RateLimiter::hit($key, 900);
+
+            $remaining = 5 - RateLimiter::attempts($key);
+
             return response()->json([
-                'success' => false,
-                'message' => 'Invalid transaction PIN.',
+                'success'            => false,
+                'message'            => 'Invalid transaction PIN.',
+                'attempts_remaining' => max(0, $remaining),
             ], 403);
         }
 
-        // Clear attempts on success
         RateLimiter::clear($key);
 
         return $next($request);

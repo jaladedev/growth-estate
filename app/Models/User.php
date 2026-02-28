@@ -2,49 +2,66 @@
 
 namespace App\Models;
 
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Tymon\JWTAuth\Contracts\JWTSubject;
 use Illuminate\Support\Str;
+use Tymon\JWTAuth\Contracts\JWTSubject;
 
-class User extends Authenticatable implements JWTSubject
+class User extends Authenticatable implements JWTSubject, MustVerifyEmail
 {
     use HasFactory, Notifiable;
 
     protected $fillable = [
+        'uid',
         'name',
         'email',
         'password',
-        'balance_kobo',
-        'account_number',
-        'bank_code',
-        'bank_name',
-        'account_name',
+        'is_admin',
+        'is_suspended',
+        'email_verified_at',
+        'transaction_pin',
+        'pin_reset_code',
+        'pin_reset_expires_at',
         'verification_code',
         'verification_code_expiry',
         'password_reset_code',
         'password_reset_code_expires_at',
+        'password_reset_verified',
+        'balance_kobo',
+        'rewards_balance_kobo',      
+        'bank_name',
+        'bank_code',
+        'account_number',
+        'account_name',
+        'recipient_code',
+        'referral_code',
         'referred_by',
-    ];
-
-    protected $appends = [
-        'is_kyc_verified',
-        'kyc_status',
+        'bank_verified',
+        'last_transaction_at',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+        'transaction_pin',
+        'pin_reset_code',
+        'verification_code',
+        'password_reset_code',
     ];
 
     protected $casts = [
-        'email_verified_at'            => 'datetime',
-        'password'                     => 'hashed',
-        'verification_code_expiry'     => 'datetime',
+        'email_verified_at'              => 'datetime',
+        'password'                       => 'hashed',
+        'verification_code_expiry'       => 'datetime',
         'password_reset_code_expires_at' => 'datetime',
-        'balance_kobo'                 => 'integer',
-        'referred_by'                  => 'integer',
+        'balance_kobo'                   => 'integer',
+        'rewards_balance_kobo'           => 'integer',  
+        'referred_by'                    => 'integer',
+        'is_admin'                       => 'boolean',
+        'is_suspended'                   => 'boolean',
+        'bank_verified'                  => 'boolean',
     ];
 
     protected static function booted()
@@ -73,7 +90,7 @@ class User extends Authenticatable implements JWTSubject
                 $attempts    = 0;
 
                 do {
-                    $code = strtoupper(substr(md5(uniqid()), 0, 8));
+                    $code     = strtoupper(substr(md5(uniqid()), 0, 8));
                     $attempts++;
 
                     if ($attempts >= $maxAttempts) {
@@ -88,9 +105,16 @@ class User extends Authenticatable implements JWTSubject
         });
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | JWT
+    |--------------------------------------------------------------------------
+    */
+
     public function getJWTIdentifier()
     {
-        return $this->getKey();
+        // Use non-sequential uid to prevent user enumeration via token subjects
+        return $this->uid;
     }
 
     public function getJWTCustomClaims()
@@ -99,10 +123,11 @@ class User extends Authenticatable implements JWTSubject
     }
 
     /*
-     |--------------------------------------------------------------------------
-     | Relationships
-     |--------------------------------------------------------------------------
-     */
+    |--------------------------------------------------------------------------
+    | Relationships
+    |--------------------------------------------------------------------------
+    */
+
     public function ledgerEntries()
     {
         return $this->hasMany(LedgerEntry::class);
@@ -151,54 +176,6 @@ class User extends Authenticatable implements JWTSubject
             ->latestOfMany('snapshot_date');
     }
 
-    /*
-     |--------------------------------------------------------------------------
-     | Wallet Helpers
-     |--------------------------------------------------------------------------
-     */
-
-    public function deposit(int $amountKobo, string $reference = null): void
-    {
-        $balanceAfter = $this->balance_kobo + $amountKobo;
-        $this->increment('balance_kobo', $amountKobo);
-        $this->balance_kobo = $balanceAfter; 
-
-        LedgerEntry::create([
-            'user_id'       => $this->id,
-            'type'          => 'deposit',
-            'amount_kobo'   => $amountKobo,
-            'balance_after' => $balanceAfter,
-            'reference'     => $reference ?? 'DEP-' . now()->timestamp,
-        ]);
-    }
-
-    public function withdraw(int $amountKobo, string $reference = null): bool
-    {
-        if ($this->balance_kobo < $amountKobo) {
-            return false;
-        }
-
-        $balanceAfter = $this->balance_kobo - $amountKobo;
-        $this->decrement('balance_kobo', $amountKobo);
-        $this->balance_kobo = $balanceAfter; 
-        LedgerEntry::create([
-            'user_id'       => $this->id,
-            'type'          => 'withdrawal',
-            'amount_kobo'   => $amountKobo,
-            'balance_after' => $balanceAfter,
-            'reference'     => $reference ?? 'WDL-' . now()->timestamp,
-        ]);
-
-        return true;
-    }
-
-
-    /*
-     |--------------------------------------------------------------------------
-     | Referral Relationships
-     |--------------------------------------------------------------------------
-     */
-
     public function kycVerification()
     {
         return $this->hasOne(KycVerification::class);
@@ -225,10 +202,110 @@ class User extends Authenticatable implements JWTSubject
     }
 
     /*
-     |--------------------------------------------------------------------------
-     | Computed Attributes
-     |--------------------------------------------------------------------------
+    |--------------------------------------------------------------------------
+    | Main Wallet Helpers
+    |--------------------------------------------------------------------------
+    */
+
+    public function deposit(int $amountKobo, string $reference = null): void
+    {
+        $this->increment('balance_kobo', $amountKobo);
+        $balanceAfter = $this->fresh()->balance_kobo;
+
+        LedgerEntry::create([
+            'uid'           => $this->id,
+            'type'          => 'deposit',
+            'amount_kobo'   => $amountKobo,
+            'balance_after' => $balanceAfter,
+            'reference'     => $reference ?? 'DEP-' . now()->timestamp,
+        ]);
+    }
+
+    public function withdraw(int $amountKobo, string $reference = null): bool
+    {
+        if ($this->balance_kobo < $amountKobo) {
+            return false;
+        }
+
+        $this->decrement('balance_kobo', $amountKobo);
+        $balanceAfter = $this->fresh()->balance_kobo;
+
+        LedgerEntry::create([
+            'uid'           => $this->id,
+            'type'          => 'withdrawal',
+            'amount_kobo'   => $amountKobo,
+            'balance_after' => $balanceAfter,
+            'reference'     => $reference ?? 'WDL-' . now()->timestamp,
+        ]);
+
+        return true;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Rewards Wallet Helpers (NEW)
+    |--------------------------------------------------------------------------
+
+    /**
+     * Credit the rewards wallet.
+     * Called when a reward is earned (referral, cashback, promo).
      */
+    public function creditRewards(int $amountKobo, string $reference, string $note = ''): void
+    {
+        $this->increment('rewards_balance_kobo', $amountKobo);
+        $rewardsAfter = $this->fresh()->rewards_balance_kobo;
+
+        LedgerEntry::create([
+            'uid'                   => $this->id,
+            'type'                  => 'reward_credit',
+            'amount_kobo'           => $amountKobo,
+            'balance_after'         => $this->fresh()->balance_kobo, 
+            'rewards_balance_after' => $rewardsAfter,
+            'reference'             => $reference,
+            'note'                  => $note ?: 'Reward credit',
+        ]);
+    }
+
+    /**
+     * Spend from rewards wallet (e.g. applied to a purchase).
+     * Returns false if insufficient rewards balance.
+     */
+    public function spendRewards(int $amountKobo, string $reference, string $note = ''): bool
+    {
+        if ($this->rewards_balance_kobo < $amountKobo) {
+            return false;
+        }
+
+        $this->decrement('rewards_balance_kobo', $amountKobo);
+        $rewardsAfter = $this->fresh()->rewards_balance_kobo;
+
+        LedgerEntry::create([
+            'uid'                   => $this->id,
+            'type'                  => 'reward_spend',
+            'amount_kobo'           => $amountKobo,
+            'balance_after'         => $this->fresh()->balance_kobo, 
+            'rewards_balance_after' => $rewardsAfter,
+            'reference'             => $reference,
+            'note'                  => $note ?: 'Reward spend',
+        ]);
+
+        return true;
+    }
+
+    /**
+     * Total spendable balance = main wallet + rewards wallet.
+     * Used at purchase checkout to show maximum purchasing power.
+     */
+    public function getTotalSpendableKoboAttribute(): int
+    {
+        return $this->balance_kobo + $this->rewards_balance_kobo;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Computed Attributes
+    |--------------------------------------------------------------------------
+    */
 
     public function getIsKycVerifiedAttribute(): bool
     {

@@ -20,12 +20,16 @@ class SupportController extends Controller
     public function chat(Request $request)
     {
         $request->validate([
-            'messages'           => 'required|array|min:1',
+            'messages'           => 'required|array|min:1|max:20',
             'messages.*.role'    => 'required|in:user,assistant',
             'messages.*.content' => 'required|string|max:2000',
         ]);
 
         $user = $request->user();
+
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
+        }
 
         $systemPrompt = <<<PROMPT
 You are a friendly, knowledgeable support assistant for Sproutvest — a Nigerian real estate investment platform where users buy units of land, manage their portfolio, make deposits/withdrawals, and track transactions.
@@ -33,14 +37,13 @@ You are a friendly, knowledgeable support assistant for Sproutvest — a Nigeria
 User context:
 - Name: {$user->name}
 - Email: {$user->email}
-- Role: {$user->role}
 
 You help with:
 - How to deposit funds (Paystack)
 - How to buy/sell land units
 - KYC verification process and status
 - Transaction PIN setup and reset
-- Wallet balance and withdrawals
+- Wallet balance and withdrawals (note: rewards balance cannot be withdrawn, only spent on purchases)
 - Portfolio and investment returns
 - Account and profile settings
 - General platform navigation
@@ -58,10 +61,10 @@ PROMPT;
             'anthropic-version' => '2023-06-01',
             'Content-Type'      => 'application/json',
         ])->post('https://api.anthropic.com/v1/messages', [
-            'model'    => 'claude-haiku-4-5-20251001',
+            'model'      => 'claude-haiku-4-5-20251001',
             'max_tokens' => 600,
-            'system'   => $systemPrompt,
-            'messages' => $request->messages,
+            'system'     => $systemPrompt,
+            'messages'   => $request->messages,
         ]);
 
         if ($response->failed()) {
@@ -117,7 +120,6 @@ PROMPT;
             'attachment_path' => $attachmentPath,
         ]);
 
-        // Send confirmation email to guest
         // Mail::to($request->email)->send(new GuestTicketConfirmation($ticket));
 
         return response()->json([

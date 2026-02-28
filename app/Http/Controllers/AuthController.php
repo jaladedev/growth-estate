@@ -44,27 +44,40 @@ class AuthController extends Controller
             return response()->json([
                 'success' => true,
                 'user'    => [
-                    'id'                => $user->id,
-                    'uid'               => $user->uid,
-                    'name'              => $user->name,
-                    'email'             => $user->email,
-                    'email_verified_at' => $user->email_verified_at,
-                    'transaction_pin'   => $user->transaction_pin,
-                    'is_admin'          => $user->is_admin,
-                    'created_at'        => $user->created_at,
-                    'updated_at'        => $user->updated_at,
-                    'balance_kobo'      => $user->balance_kobo,
-                    'bank_name'         => $user->bank_name,
-                    'bank_code'         => $user->bank_code,
-                    'account_number'    => $user->account_number,
-                    'account_name'      => $user->account_name,
-                    'referral_code'     => $user->referral_code,
-                    'is_kyc_verified'   => $user->is_kyc_verified,
-                    'kyc_status'        => $user->kyc_status,
+                    'id'                     => $user->id,
+                    'uid'                    => $user->uid,
+                    'name'                   => $user->name,
+                    'email'                  => $user->email,
+                    'email_verified_at'      => $user->email_verified_at,
+                    'transaction_pin'        => (bool) $user->transaction_pin, 
+                    'is_admin'               => $user->is_admin,
+                    'created_at'             => $user->created_at,
+                    'updated_at'             => $user->updated_at,
+
+                    // ── Balances ──────────────────────────────────────────
+                    'balance_kobo'           => $user->balance_kobo,
+                    'balance_naira'          => $user->balance_kobo / 100,
+                    'rewards_balance_kobo'   => $user->rewards_balance_kobo,   
+                    'rewards_balance_naira'  => $user->rewards_balance_kobo / 100, 
+                    'total_spendable_kobo'   => $user->total_spendable_kobo,   
+                    'total_spendable_naira'  => $user->total_spendable_kobo / 100,
+
+                    // ── Bank ─────────────────────────────────────────────
+                    'bank_name'              => $user->bank_name,
+                    'bank_code'              => $user->bank_code,
+                    'account_number'         => $user->account_number,
+                    'account_name'           => $user->account_name,
+
+                    // ── Referral ─────────────────────────────────────────
+                    'referral_code'          => $user->referral_code,
+
+                    // ── KYC ──────────────────────────────────────────────
+                    'is_kyc_verified'        => $user->is_kyc_verified,
+                    'kyc_status'             => $user->kyc_status,
                 ],
             ]);
         } catch (\Exception $e) {
-            Log::error('Error fetching user profile', ['error' => $e->getMessage()]);
+            \Log::error('Error fetching user profile', ['error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,

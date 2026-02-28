@@ -2,20 +2,19 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\User;
+use App\Models\LedgerEntry;
 use App\Models\Referral;
 use App\Models\ReferralReward;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ReferralController extends Controller
 {
-    /**
-     * Get user's referral dashboard
-     */
-    public function dashboard()
+    public function dashboard(Request $request)
     {
-        $user = auth()->user();
+        $user = $request->user();
 
         $referrals = Referral::where('referrer_id', $user->id)
             ->with('referredUser:id,name,email,created_at')
@@ -29,131 +28,102 @@ class ReferralController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => [
-                'referral_code' => $user->referral_code,
-                'referral_link' => url("/register?ref={$user->referral_code}"),
-                'total_referrals' => $referrals->count(),
-                'completed_referrals' => $referrals->where('status', 'completed')->count(),
-                'pending_referrals' => $referrals->where('status', 'pending')->count(),
-                'total_rewards' => $rewards->sum('amount_kobo'),
-                'unclaimed_rewards' => $rewards->where('claimed', false)->sum('amount_kobo'),
-                'referrals' => $referrals,
-                'rewards' => $rewards,
-            ]
+            'data'    => [
+                'referral_code'          => $user->referral_code,
+                'referral_link'          => url("/register?ref={$user->referral_code}"),
+                'total_referrals'        => $referrals->count(),
+                'completed_referrals'    => $referrals->where('status', 'completed')->count(),
+                'pending_referrals'      => $referrals->where('status', 'pending')->count(),
+                'total_rewards_kobo'     => $rewards->sum('amount_kobo'),
+                'unclaimed_rewards_kobo' => $rewards->where('claimed', false)->sum('amount_kobo'),
+                'referrals'              => $referrals,
+                'rewards'                => $rewards,
+            ],
         ]);
     }
 
-    /**
-     * Validate referral code
-     */
     public function validateCode(Request $request)
     {
-        $request->validate([
-            'code' => 'required|string'
-        ]);
+        $request->validate(['code' => 'required|string']);
 
         $referrer = User::where('referral_code', $request->code)->first();
 
-        if (!$referrer) {
+        if (! $referrer) {
             return response()->json([
                 'success' => false,
-                'message' => 'Invalid referral code'
+                'message' => 'Invalid referral code',
             ], 404);
         }
 
         return response()->json([
             'success' => true,
-            'data' => [
-                'code' => $referrer->referral_code,
+            'data'    => [
+                'code'          => $referrer->referral_code,
                 'referrer_name' => $referrer->name,
-            ]
+            ],
         ]);
     }
 
-    /**
-     * Apply referral code during registration
-     * This should be called in your registration process
-     */
     public function applyReferral(User $newUser, string $referralCode)
     {
         $referrer = User::where('referral_code', $referralCode)->first();
 
-        if (!$referrer) {
+        if (! $referrer) {
             return false;
         }
 
-        // Update new user's referred_by
         $newUser->update(['referred_by' => $referrer->id]);
 
-        // Create referral record
-        $referral = Referral::create([
-            'referrer_id' => $referrer->id,
+        return Referral::create([
+            'referrer_id'      => $referrer->id,
             'referred_user_id' => $newUser->id,
-            'status' => 'pending',
+            'status'           => 'pending',
         ]);
-
-        return $referral;
     }
 
-    /**
-     * Complete referral (called when referred user makes first purchase)
-     */
     public function completeReferral(User $referredUser)
     {
         $referral = Referral::where('referred_user_id', $referredUser->id)
             ->where('status', 'pending')
             ->first();
 
-        if (!$referral) {
+        if (! $referral) {
             return null;
         }
 
         DB::transaction(function () use ($referral) {
-            // Mark referral as completed
             $referral->markCompleted();
-
-            // Create rewards for referrer
             $this->createReferrerReward($referral);
-
-            // Create rewards for referred user
             $this->createReferredUserReward($referral);
         });
 
         return $referral;
     }
 
-    /**
-     * Create reward for referrer
-     */
-    private function createReferrerReward(Referral $referral)
+    private function createReferrerReward(Referral $referral): void
     {
-        // Example: Give referrer 5000 kobo (₦50) cashback
         ReferralReward::create([
             'referral_id' => $referral->id,
-            'user_id' => $referral->referrer_id,
+            'user_id'     => $referral->referrer_id,
             'reward_type' => 'cashback',
             'amount_kobo' => 5000, // ₦50
-            'claimed' => false,
+            'claimed'     => false,
         ]);
     }
 
-    /**
-     * Create reward for referred user
-     */
-    private function createReferredUserReward(Referral $referral)
+    private function createReferredUserReward(Referral $referral): void
     {
-        // Example: Give referred user 10% discount on first purchase
         ReferralReward::create([
-            'referral_id' => $referral->id,
-            'user_id' => $referral->referred_user_id,
-            'reward_type' => 'discount',
+            'referral_id'         => $referral->id,
+            'user_id'             => $referral->referred_user_id,
+            'reward_type'         => 'discount',
             'discount_percentage' => 10,
-            'claimed' => false,
+            'claimed'             => false,
         ]);
     }
 
     /**
-     * Claim a reward
+     * Claim a reward.
      */
     public function claimReward($rewardId)
     {
@@ -164,42 +134,56 @@ class ReferralController extends Controller
         if ($reward->claimed) {
             return response()->json([
                 'success' => false,
-                'message' => 'Reward already claimed'
+                'message' => 'Reward already claimed',
             ], 400);
         }
 
         DB::transaction(function () use ($reward) {
             $reward->claim();
 
-            // Process the reward based on type
             switch ($reward->reward_type) {
+
                 case 'cashback':
-                    // Add to user's wallet/balance
-                    // TODO: Implement wallet credit
+                    if ($reward->amount_kobo > 0) {
+                        $user = User::lockForUpdate()->find($reward->user_id);
+
+                        // Credit the REWARDS wallet, not the main wallet
+                        $user->creditRewards(
+                            $reward->amount_kobo,
+                            'REF-REWARD-' . $reward->id,
+                            'Referral cashback reward'
+                        );
+
+                        Log::info('Referral cashback credited to rewards wallet', [
+                            'user_id'              => $user->id,
+                            'reward_id'            => $reward->id,
+                            'amount_kobo'          => $reward->amount_kobo,
+                            'rewards_balance_kobo' => $user->fresh()->rewards_balance_kobo,
+                        ]);
+                    }
                     break;
-                
+
                 case 'bonus_units':
-                    // Add bonus units to a land
-                    // TODO: Implement bonus units logic
+                    // Requires land context — flagged for manual processing
+                    Log::info('Bonus units reward claimed — manual processing required', [
+                        'reward_id' => $reward->id,
+                        'user_id'   => $reward->user_id,
+                    ]);
                     break;
-                
+
                 case 'discount':
-                    // Discount is applied at checkout
-                    // Mark as claimed for tracking
+                    // Applied at checkout — marking claimed is sufficient
                     break;
             }
         });
 
         return response()->json([
             'success' => true,
-            'message' => 'Reward claimed successfully',
-            'data' => $reward->fresh()
+            'message' => 'Reward claimed successfully. Your rewards balance has been updated.',
+            'data'    => $reward->fresh(),
         ]);
     }
 
-    /**
-     * Get available rewards for current user
-     */
     public function availableRewards()
     {
         $rewards = ReferralReward::where('user_id', auth()->id())
@@ -210,13 +194,10 @@ class ReferralController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $rewards
+            'data'    => $rewards,
         ]);
     }
 
-    /**
-     * Admin: Get all referrals
-     */
     public function adminIndex(Request $request)
     {
         $this->authorizeAdmin();
@@ -227,41 +208,34 @@ class ReferralController extends Controller
             $query->where('status', $request->status);
         }
 
-        $referrals = $query->latest()->paginate(50);
-
         return response()->json([
             'success' => true,
-            'data' => $referrals
+            'data'    => $query->latest()->paginate(50),
         ]);
     }
 
-    /**
-     * Admin: Get referral statistics
-     */
     public function adminStats()
     {
         $this->authorizeAdmin();
 
-        $stats = [
-            'total_referrals' => Referral::count(),
-            'completed_referrals' => Referral::completed()->count(),
-            'pending_referrals' => Referral::pending()->count(),
-            'total_rewards_issued' => ReferralReward::sum('amount_kobo'),
-            'unclaimed_rewards' => ReferralReward::unclaimed()->sum('amount_kobo'),
-            'top_referrers' => User::withCount('referrals')
-                ->having('referrals_count', '>', 0)
-                ->orderByDesc('referrals_count')
-                ->take(10)
-                ->get(['id', 'name', 'email', 'referral_code']),
-        ];
-
         return response()->json([
             'success' => true,
-            'data' => $stats
+            'data'    => [
+                'total_referrals'      => Referral::count(),
+                'completed_referrals'  => Referral::completed()->count(),
+                'pending_referrals'    => Referral::pending()->count(),
+                'total_rewards_issued' => ReferralReward::sum('amount_kobo'),
+                'unclaimed_rewards'    => ReferralReward::unclaimed()->sum('amount_kobo'),
+                'top_referrers'        => User::withCount('referrals')
+                    ->having('referrals_count', '>', 0)
+                    ->orderByDesc('referrals_count')
+                    ->take(10)
+                    ->get(['id', 'name', 'email', 'referral_code']),
+            ],
         ]);
     }
 
-    private function authorizeAdmin()
+    private function authorizeAdmin(): void
     {
         abort_unless(auth()->user()?->is_admin, 403);
     }

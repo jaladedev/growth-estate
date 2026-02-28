@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
+use App\Models\Land;
+use App\Models\PortfolioDailySnapshot;
+use App\Models\UserLand;
+use App\Services\PortfolioService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Tymon\JWTAuth\Facades\JWTAuth;
@@ -10,216 +13,180 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 class PortfolioController extends Controller
 {
     /**
-     * Get user's latest snapshot date
+     * GET /api/portfolio/summary
      */
-    private function latestSnapshotDate(int $userId): ?string
+    public function summary()
     {
-        return DB::table('portfolio_daily_snapshots')
-            ->where('user_id', $userId)
-            ->max('snapshot_date');
+        $user = JWTAuth::parseToken()->authenticate();
+
+        return response()->json([
+            'success' => true,
+            'data'    => PortfolioService::summary($user->id),
+        ]);
     }
 
     /**
-     * Dashboard summary cards
-     */
-    public function summary(Request $request)
-       {
-        try {
-            $user = JWTAuth::parseToken()->authenticate();
-
-            // Get user's current holdings from user_land
-            $userLands = DB::table('user_land')
-                ->where('user_id', $user->id)
-                ->where('units', '>', 0)
-                ->get();
-
-            if ($userLands->isEmpty()) {
-                return response()->json([
-                    'success' => true,
-                    'data' => [
-                        'total_units' => 0,
-                        'total_invested' => 0,
-                        'current_portfolio_value' => 0,
-                        'total_profit_loss' => 0,
-                        'profit_loss_percent' => 0,
-                        'lands' => [],
-                    ],
-                ]);
-            }
-
-            // Get land IDs
-            $landIds = $userLands->pluck('land_id')->toArray();
-
-            // Get current prices for all lands
-            $prices = \App\Models\LandPriceHistory::currentPricesForLands($landIds);
-
-            // Calculate total invested (all-time)
-            $investedData = DB::table('purchases')
-                ->select(
-                    DB::raw('SUM(total_amount_paid_kobo) as total_paid'),
-                    DB::raw('SUM(total_amount_received_kobo) as total_received'),
-                    DB::raw('SUM(total_amount_paid_kobo) - SUM(total_amount_received_kobo) as net_invested')
-                )
-                ->where('user_id', $user->id)
-                ->whereIn('status', ['completed', 'partially_sold'])
-                ->first();
-
-            $totalInvested = $investedData->net_invested ?? 0;
-
-            // Calculate current portfolio value and breakdown by land
-            $totalUnits = 0;
-            $totalValue = 0;
-            $landBreakdown = [];
-
-            foreach ($userLands as $userLand) {
-                $price = $prices->get($userLand->land_id);
-                $pricePerUnit = $price ? $price->price_per_unit_kobo : 0;
-                $landValue = $userLand->units * $pricePerUnit;
-
-                $totalUnits += $userLand->units;
-                $totalValue += $landValue;
-
-                // Get land details
-                $land = DB::table('lands')->find($userLand->land_id);
-
-                $landBreakdown[] = [
-                    'land_id' => $userLand->land_id,
-                    'land_name' => $land->title ?? 'Unknown',
-                    'units' => $userLand->units,
-                    'price_per_unit_kobo' => $pricePerUnit,
-                    'price_per_unit_naira' => $pricePerUnit / 100,
-                    'total_value_kobo' => $landValue,
-                    'total_value_naira' => $landValue / 100,
-                ];
-            }
-
-            // Calculate profit/loss
-            $profitLoss = $totalValue - $totalInvested;
-            $profitLossPercent = $totalInvested > 0 
-                ? round(($profitLoss / $totalInvested) * 100, 2) 
-                : 0;
-
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'total_units' => $totalUnits,
-                    'total_invested_kobo' => $totalInvested,
-                    'total_invested_naira' => $totalInvested / 100,
-                    'current_portfolio_value_kobo' => $totalValue,
-                    'current_portfolio_value_naira' => $totalValue / 100,
-                    'total_profit_loss_kobo' => $profitLoss,
-                    'total_profit_loss_naira' => $profitLoss / 100,
-                    'profit_loss_percent' => $profitLossPercent,
-                    'lands' => $landBreakdown,
-                ],
-            ]);
-
-        } catch (\Exception $e) {
-            \Log::error('Portfolio summary error', [
-                'user_id' => $user->id ?? null,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Error fetching portfolio summary',
-                'error' => $e->getMessage(),
-            ], 500);
-        }
-    }
-
-    /**
-     * Portfolio value over time (line chart)
+     * GET /api/portfolio/chart
+     * Returns daily snapshot data for the portfolio value chart.
      */
     public function chart(Request $request)
     {
+        $user = JWTAuth::parseToken()->authenticate();
+
         $request->validate([
-            'from' => 'nullable|date',
-            'to'   => 'nullable|date|after_or_equal:from',
+            'days' => 'sometimes|integer|min:7|max:365',
         ]);
 
-        $userId = $request->user()->id;
+        $days = $request->integer('days', 30);
 
-        $query = DB::table('portfolio_daily_snapshots')
-            ->select('snapshot_date', 'total_portfolio_value_kobo')
-            ->where('user_id', $userId)
-            ->orderBy('snapshot_date');
-
-        if ($request->filled('from') && $request->filled('to')) {
-            $query->whereBetween('snapshot_date', [$request->from, $request->to]);
-        }
-
-        return response()->json($query->get());
-    }
-
-    /**
-     * Profit / Loss performance chart
-     */
-    public function performance(Request $request)
-    {
-        $userId = $request->user()->id;
-
-        $snapshots = DB::table('portfolio_daily_snapshots')
-            ->select(
-                'snapshot_date',
-                'total_invested_kobo',
-                'total_portfolio_value_kobo',
-                DB::raw('(total_portfolio_value_kobo - total_invested_kobo) as profit_loss_kobo'),
-                DB::raw('CASE WHEN total_invested_kobo > 0 THEN ROUND((total_portfolio_value_kobo - total_invested_kobo) / total_invested_kobo * 100, 2) ELSE 0 END as profit_loss_percent')
-            )
-            ->where('user_id', $userId)
+        $snapshots = PortfolioDailySnapshot::where('user_id', $user->id)
+            ->where('snapshot_date', '>=', now()->subDays($days)->toDateString())
             ->orderBy('snapshot_date')
-            ->get();
+            ->select('snapshot_date', 'total_value_kobo', 'total_invested_kobo')
+            ->get()
+            ->map(fn ($s) => [
+                'date'               => $s->snapshot_date,
+                'value_kobo'         => $s->total_value_kobo,
+                'value_naira'        => $s->total_value_kobo / 100,
+                'invested_kobo'      => $s->total_invested_kobo,
+                'invested_naira'     => $s->total_invested_kobo / 100,
+                'profit_loss_kobo'   => $s->total_value_kobo - $s->total_invested_kobo,
+                'profit_loss_naira'  => ($s->total_value_kobo - $s->total_invested_kobo) / 100,
+            ]);
 
-        return response()->json($snapshots);
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'days'      => $days,
+                'snapshots' => $snapshots,
+            ],
+        ]);
     }
 
     /**
-     * Asset allocation (pie / donut chart)
+     * GET /api/portfolio/performance
+     * Returns return-on-investment metrics.
      */
-    public function allocation(Request $request)
+    public function performance()
     {
-        $userId = $request->user()->id;
-        $latestDate = $this->latestSnapshotDate($userId);
+        $user    = JWTAuth::parseToken()->authenticate();
+        $summary = PortfolioService::summary($user->id);
 
-        if (!$latestDate) {
-            return response()->json([]);
+        $firstSnapshot = PortfolioDailySnapshot::where('user_id', $user->id)
+            ->orderBy('snapshot_date')
+            ->first();
+
+        $daysSinceFirstInvestment = $firstSnapshot
+            ? now()->diffInDays($firstSnapshot->snapshot_date)
+            : 0;
+
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'total_return_kobo'      => $summary['total_profit_loss_kobo'],
+                'total_return_naira'     => $summary['total_profit_loss_naira'],
+                'total_return_percent'   => $summary['profit_loss_percent'],
+                'days_invested'          => $daysSinceFirstInvestment,
+                'annualized_return'      => $this->annualizedReturn(
+                    $summary['profit_loss_percent'],
+                    $daysSinceFirstInvestment
+                ),
+            ],
+        ]);
+    }
+
+    /**
+     * GET /api/portfolio/allocation
+     * Returns per-land breakdown as a percentage of total portfolio.
+     */
+    public function allocation()
+    {
+        $user    = JWTAuth::parseToken()->authenticate();
+        $summary = PortfolioService::summary($user->id);
+
+        $totalValue = $summary['current_portfolio_value_kobo'];
+
+        $lands = collect($summary['lands'])->map(function ($land) use ($totalValue) {
+            $land['allocation_percent'] = $totalValue > 0
+                ? round(($land['total_value_kobo'] / $totalValue) * 100, 2)
+                : 0;
+            return $land;
+        });
+
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'total_value_kobo'  => $totalValue,
+                'total_value_naira' => $totalValue / 100,
+                'lands'             => $lands,
+            ],
+        ]);
+    }
+
+    /**
+     * GET /api/portfolio/asset/{land}
+     * Returns details for a single held asset.
+     */
+    public function asset(Land $land)
+    {
+        $user = JWTAuth::parseToken()->authenticate();
+
+        $userLand = UserLand::where('user_id', $user->id)
+            ->where('land_id', $land->id)
+            ->where('units', '>', 0)
+            ->first();
+
+        if (! $userLand) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You do not hold any units in this land.',
+            ], 404);
         }
 
-        return response()->json(
-            DB::table('portfolio_land_snapshots as pls')
-                ->join('lands', 'lands.id', '=', 'pls.land_id')
-                ->select(
-                    'lands.title as land_name',
-                    'pls.land_value_kobo'
-                )
-                ->where('pls.user_id', $userId)
-                ->where('pls.snapshot_date', $latestDate)
-                ->get()
-        );
+        $pricePerUnit  = $land->current_price_per_unit_kobo;
+        $currentValue  = $userLand->units * $pricePerUnit;
+
+        $purchase = DB::table('purchases')
+            ->where('user_id', $user->id)
+            ->where('land_id', $land->id)
+            ->first();
+
+        $costBasis = $purchase
+            ? ($purchase->total_amount_paid_kobo - $purchase->total_amount_received_kobo)
+            : 0;
+
+        $profitLoss = $currentValue - $costBasis;
+
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'land_id'              => $land->id,
+                'land_name'            => $land->title,
+                'units'                => $userLand->units,
+                'price_per_unit_kobo'  => $pricePerUnit,
+                'price_per_unit_naira' => $pricePerUnit / 100,
+                'current_value_kobo'   => $currentValue,
+                'current_value_naira'  => $currentValue / 100,
+                'cost_basis_kobo'      => $costBasis,
+                'cost_basis_naira'     => $costBasis / 100,
+                'profit_loss_kobo'     => $profitLoss,
+                'profit_loss_naira'    => $profitLoss / 100,
+                'profit_loss_percent'  => $costBasis > 0
+                    ? round(($profitLoss / $costBasis) * 100, 2)
+                    : 0,
+                'first_purchased_at'   => $purchase?->purchase_date,
+            ],
+        ]);
     }
 
-    /**
-     * Single land performance over time
-     */
-    public function asset(Request $request, int $landId)
+    private function annualizedReturn(float $totalReturnPercent, int $days): float
     {
-        $userId = $request->user()->id;
+        if ($days < 1) {
+            return 0;
+        }
 
-        return response()->json(
-            DB::table('portfolio_land_snapshots')
-                ->select(
-                    'snapshot_date',
-                    'units_owned',
-                    'invested_kobo',
-                    'land_value_kobo',
-                    DB::raw('(land_value_kobo - invested_kobo) as profit_loss_kobo')
-                )
-                ->where('user_id', $userId)
-                ->where('land_id', $landId)
-                ->orderBy('snapshot_date')
-                ->get()
-        );
+        // Compound annualized return: (1 + r)^(365/days) - 1
+        $r = $totalReturnPercent / 100;
+        return round((pow(1 + $r, 365 / $days) - 1) * 100, 2);
     }
 }

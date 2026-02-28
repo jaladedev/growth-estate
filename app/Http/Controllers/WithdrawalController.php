@@ -2,9 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\User;
-use App\Models\Withdrawal;
 use App\Models\LedgerEntry;
+use App\Models\Withdrawal;
 use App\Notifications\WithdrawalConfirmed;
 use App\Notifications\WithdrawalFailedNotification;
 use Illuminate\Http\Request;
@@ -16,23 +15,25 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 
 class WithdrawalController extends Controller
 {
-    /**
-     * Handle user withdrawal request
-     */
     public function requestWithdrawal(Request $request)
     {
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            // 100000 kobo = ₦1,000
             'amount' => 'required|integer|min:500000',
         ]);
+
+        if (! $user->is_kyc_verified) {
+            return response()->json([
+                'error' => 'KYC verification is required before withdrawing funds.',
+            ], 403);
+        }
 
         if ($user->balance_kobo < $request->amount) {
             return response()->json(['error' => 'Insufficient balance'], 400);
         }
 
-        if (!$user->account_number || !$user->bank_code) {
+        if (! $user->account_number || ! $user->bank_code) {
             return response()->json(['error' => 'Bank details are missing'], 400);
         }
 
@@ -48,12 +49,13 @@ class WithdrawalController extends Controller
             DB::transaction(function () use ($user, $request, $referenceCode) {
                 $user->decrement('balance_kobo', $request->amount);
 
-                // Record in ledger
+                $balanceAfter = $user->fresh()->balance_kobo;
+
                 LedgerEntry::create([
                     'uid'           => $user->id,
                     'type'          => 'withdrawal',
                     'amount_kobo'   => $request->amount,
-                    'balance_after' => $user->balance_kobo - $request->amount,
+                    'balance_after' => $balanceAfter,
                     'reference'     => $referenceCode,
                 ]);
 
@@ -93,18 +95,31 @@ class WithdrawalController extends Controller
     }
 
     /**
-     * Simulate withdrawal in test mode
+     * Simulate withdrawal in test mode.
+     * Only simulates the transfer — does NOT bypass signature verification.
      */
     protected function simulateTestWithdrawal($referenceCode)
     {
         Log::info('Simulating test mode withdrawal', ['reference' => $referenceCode]);
 
-        $this->handlePaystackCallback(new Request([
-            'data' => [
-                'reference' => $referenceCode,
-                'status'    => 'success',
-            ],
-        ]));
+        // Directly mark as completed for test — do NOT call handlePaystackCallback
+        // to avoid bypassing signature checks in a shared code path.
+        $withdrawal = Withdrawal::firstWhere('reference', $referenceCode);
+
+        if ($withdrawal && $withdrawal->status !== 'completed') {
+            DB::transaction(function () use ($withdrawal) {
+                $withdrawal->update(['status' => 'completed']);
+
+                try {
+                    $withdrawal->user->notify(new WithdrawalConfirmed($withdrawal));
+                } catch (\Exception $e) {
+                    Log::warning('Test withdrawal notification failed', [
+                        'error'   => $e->getMessage(),
+                        'user_id' => $withdrawal->user_id,
+                    ]);
+                }
+            });
+        }
 
         return response()->json([
             'message'   => 'Test mode withdrawal successful',
@@ -130,12 +145,12 @@ class WithdrawalController extends Controller
         $transferResponse = Http::withToken(config('services.paystack.secret_key'))
             ->post('https://api.paystack.co/transfer', [
                 'source'    => 'balance',
-                'amount'    => $amountKobo, 
+                'amount'    => $amountKobo,
                 'recipient' => $recipientCode,
                 'reference' => $referenceCode,
             ]);
 
-        if (!$transferResponse->successful()) {
+        if (! $transferResponse->successful()) {
             throw new \Exception('Transfer initiation failed: ' . $transferResponse->json()['message']);
         }
     }
@@ -156,7 +171,7 @@ class WithdrawalController extends Controller
                 'currency'       => 'NGN',
             ]);
 
-        if (!$recipientResponse->successful()) {
+        if (! $recipientResponse->successful()) {
             throw new \Exception('Failed to create transfer recipient: ' . $recipientResponse->json()['message']);
         }
 
@@ -167,18 +182,24 @@ class WithdrawalController extends Controller
     }
 
     /**
-     * Handle Paystack webhook callback
+     * Handle Paystack webhook callback.
      */
     public function handlePaystackCallback(Request $request)
     {
-        if (!config('services.paystack.test_mode')) {
-            $payload   = file_get_contents('php://input');
-            $signature = $request->header('x-paystack-signature');
+        //verify the signature
+        $payload   = $request->getContent();
+        $signature = $request->header('x-paystack-signature');
 
-            if (!hash_equals(hash_hmac('sha512', $payload, config('services.paystack.webhook_secret')), $signature)) {
-                Log::warning('Invalid Paystack webhook signature');
-                abort(403, 'Unauthorized webhook');
-            }
+        if (! $signature) {
+            Log::warning('Paystack webhook missing signature');
+            return response()->json(['status' => 'missing_signature'], 400);
+        }
+
+        $computed = hash_hmac('sha512', $payload, config('services.paystack.secret_key'));
+
+        if (! hash_equals($computed, $signature)) {
+            Log::warning('Invalid Paystack webhook signature');
+            abort(403, 'Unauthorized webhook');
         }
 
         $reference = $request->input('data.reference');
@@ -186,7 +207,7 @@ class WithdrawalController extends Controller
 
         $withdrawal = Withdrawal::firstWhere('reference', $reference);
 
-        if (!$withdrawal) {
+        if (! $withdrawal) {
             return response()->json(['error' => 'Withdrawal not found'], 404);
         }
 
@@ -210,12 +231,13 @@ class WithdrawalController extends Controller
             } elseif ($status === 'failed') {
                 $withdrawal->user->increment('balance_kobo', $withdrawal->amount_kobo);
 
-                // Restore in ledger
+                $balanceAfter = $withdrawal->user->fresh()->balance_kobo;
+
                 LedgerEntry::create([
                     'uid'           => $withdrawal->user->id,
                     'type'          => 'withdrawal_reversal',
                     'amount_kobo'   => $withdrawal->amount_kobo,
-                    'balance_after' => $withdrawal->user->fresh()->balance_kobo,
+                    'balance_after' => $balanceAfter,
                     'reference'     => $withdrawal->reference . '-REVERSAL',
                 ]);
 
@@ -245,13 +267,13 @@ class WithdrawalController extends Controller
     {
         $withdrawal = Withdrawal::firstWhere('reference', $reference);
 
-        if (!$withdrawal) {
+        if (! $withdrawal) {
             return response()->json(['error' => 'Withdrawal not found'], 404);
         }
 
         return response()->json([
             'status'       => $withdrawal->status,
-            'amount'       => $withdrawal->amount_kobo / 100, 
+            'amount'       => $withdrawal->amount_kobo / 100,
             'amount_kobo'  => $withdrawal->amount_kobo,
             'requested_at' => $withdrawal->created_at,
             'completed_at' => $withdrawal->updated_at,
@@ -270,7 +292,7 @@ class WithdrawalController extends Controller
         }
 
         foreach ($pendingWithdrawals as $withdrawal) {
-            if (!$withdrawal->reference) {
+            if (! $withdrawal->reference) {
                 Log::error('Skipping withdrawal due to missing reference', [
                     'withdrawal_id' => $withdrawal->id,
                 ]);
