@@ -20,6 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'verified'           => \App\Http\Middleware\EnsureEmailIsVerified::class,
             'throttle.sensitive' => \App\Http\Middleware\ThrottleSensitiveRequests::class,
+            'suspended' => \App\Http\Middleware\EnsureUserIsNotSuspended::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

@@ -3,11 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Models\Deposit;
+use App\Models\LandPriceHistory;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Models\UserLand;
 use App\Models\Withdrawal;
 use App\Mail\TransactionPinResetMail;
+use App\Services\PortfolioService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -15,8 +17,6 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\RateLimiter;
-use App\Services\PortfolioService;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 class UserController extends Controller
@@ -35,7 +35,7 @@ class UserController extends Controller
             ->first();
 
         return response()->json([
-            'land_id'    => $landId,
+            'land_id'     => $landId,
             'units_owned' => $userLand ? $userLand->units : 0,
         ]);
     }
@@ -65,12 +65,12 @@ class UserController extends Controller
             $pricePerUnit = $price ? $price->price_per_unit_kobo : 0;
 
             return [
-                'land_id'            => $userLand->land->id,
-                'land_name'          => $userLand->land->title,
-                'units_owned'        => $userLand->units,
-                'price_per_unit_kobo' => $pricePerUnit,
+                'land_id'              => $userLand->land->id,
+                'land_name'            => $userLand->land->title,
+                'units_owned'          => $userLand->units,
+                'price_per_unit_kobo'  => $pricePerUnit,
                 'price_per_unit_naira' => $pricePerUnit / 100,
-                'current_value'      => ($userLand->units * $pricePerUnit) / 100,
+                'current_value'        => ($userLand->units * $pricePerUnit) / 100,
             ];
         });
 
@@ -82,17 +82,18 @@ class UserController extends Controller
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            'pin' => 'required|digits:4',
+            'pin'              => 'required|digits:4',
+            'pin_confirmation' => 'required|same:pin',  
         ]);
 
         if ($user->transaction_pin) {
-            return response()->json(['error' => 'Transaction PIN is already set'], 400);
+            return response()->json(['error' => 'Transaction PIN is already set. Use update instead.'], 400);
         }
 
-        $user->transaction_pin = bcrypt($request->pin);
+        $user->transaction_pin = Hash::make($request->pin);
         $user->save();
 
-        return response()->json(['message' => 'Transaction PIN set successfully']);
+        return response()->json(['message' => 'Transaction PIN set successfully.']);
     }
 
     public function updateTransactionPin(Request $request)
@@ -100,18 +101,19 @@ class UserController extends Controller
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            'old_pin' => 'required|digits:4',
-            'new_pin' => 'required|digits:4',
+            'old_pin'          => 'required|digits:4',
+            'new_pin'          => 'required|digits:4',
+            'new_pin_confirmation' => 'required|same:new_pin',  
         ]);
 
-        if (! password_verify($request->old_pin, $user->transaction_pin)) {
-            return response()->json(['error' => 'Old PIN is incorrect'], 400);
+        if (! Hash::check($request->old_pin, $user->transaction_pin)) {
+            return response()->json(['error' => 'Old PIN is incorrect.'], 400);
         }
 
-        $user->transaction_pin = bcrypt($request->new_pin);
+        $user->transaction_pin = Hash::make($request->new_pin);
         $user->save();
 
-        return response()->json(['message' => 'Transaction PIN updated successfully']);
+        return response()->json(['message' => 'Transaction PIN updated successfully.']);
     }
 
     public function sendPinResetCode(Request $request)
@@ -120,28 +122,21 @@ class UserController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
-        // Always return success to prevent user enumeration
-        if (! $user) {
-            return response()->json(['message' => 'If that email is registered, a PIN reset code has been sent.']);
+        if ($user) {
+            $code = random_int(100000, 999999);
+            $user->pin_reset_code       = Hash::make((string) $code);
+            $user->pin_reset_expires_at = now()->addMinutes(10);
+            $user->save();
+            Mail::to($user->email)->queue(new TransactionPinResetMail($user, $code));
         }
 
-        $code = random_int(100000, 999999);
-
-        $user->pin_reset_code       = Hash::make((string) $code);
-        $user->pin_reset_expires_at = now()->addMinutes(10);
-        $user->save();
-
-        Mail::to($user->email)->send(new TransactionPinResetMail($user, $code));
-
+        // Always return same response to prevent enumeration
         return response()->json(['message' => 'If that email is registered, a PIN reset code has been sent.']);
     }
 
     public function verifyPinResetCode(Request $request)
     {
-        $request->validate([
-            'email' => 'required|email',
-            'code'  => 'required|numeric',
-        ]);
+        $request->validate(['email' => 'required|email', 'code' => 'required|numeric']);
 
         $user = User::where('email', $request->email)->first();
 
@@ -152,18 +147,19 @@ class UserController extends Controller
             now()->greaterThan($user->pin_reset_expires_at) ||
             ! Hash::check((string) $request->code, $user->pin_reset_code)
         ) {
-            return response()->json(['error' => 'Invalid or expired code'], 400);
+            return response()->json(['error' => 'Invalid or expired code.'], 400);
         }
 
-        return response()->json(['message' => 'Code verified successfully.']);
+        return response()->json(['message' => 'Code verified.']);
     }
 
     public function resetTransactionPin(Request $request)
     {
         $request->validate([
-            'email'   => 'required|email',
-            'code'    => 'required|numeric',
-            'new_pin' => 'required|digits:4',
+            'email'            => 'required|email',
+            'code'             => 'required|numeric',
+            'new_pin'          => 'required|digits:4',
+            'new_pin_confirmation' => 'required|same:new_pin',  // Fix #7
         ]);
 
         $user = User::where('email', $request->email)->first();
@@ -175,7 +171,7 @@ class UserController extends Controller
             now()->greaterThan($user->pin_reset_expires_at) ||
             ! Hash::check((string) $request->code, $user->pin_reset_code)
         ) {
-            return response()->json(['error' => 'Invalid or expired code'], 400);
+            return response()->json(['error' => 'Invalid or expired code.'], 400);
         }
 
         $user->transaction_pin      = Hash::make($request->new_pin);
@@ -197,10 +193,10 @@ class UserController extends Controller
 
         try {
             $banks = $this->getPaystackBanks();
+            $bank  = collect($banks)->firstWhere('name', $request->bank_name);
 
-            $bank = collect($banks)->firstWhere('name', $request->bank_name);
             if (! $bank) {
-                return response()->json(['error' => 'Invalid bank name provided.'], 400);
+                return response()->json(['error' => 'Invalid bank name.'], 400);
             }
 
             $bankCode = $bank['code'];
@@ -212,28 +208,20 @@ class UserController extends Controller
                 ]);
 
             if (! $resolveResponse->successful()) {
-                Log::error('Paystack bank verification failed', [
-                    'user_id' => $user->id,
-                    'status'  => $resolveResponse->status(),
-                ]);
-
-                return response()->json([
-                    'error' => 'Failed to verify account number. Please try again later.',
-                ], 400);
+                return response()->json(['error' => 'Failed to verify account number.'], 400);
             }
 
-            $resolvedData = $resolveResponse->json()['data'] ?? null;
-            if (! $resolvedData || empty($resolvedData['account_name'])) {
-                return response()->json(['error' => 'Invalid account details returned from Paystack.'], 400);
+            $accountName = $resolveResponse->json()['data']['account_name'] ?? null;
+            if (! $accountName) {
+                return response()->json(['error' => 'Invalid account details.'], 400);
             }
-
-            $accountName = $resolvedData['account_name'];
 
             $user->update([
                 'account_number' => $request->account_number,
                 'bank_code'      => $bankCode,
                 'bank_name'      => $request->bank_name,
                 'account_name'   => $accountName,
+                'recipient_code' => null, 
             ]);
 
             return response()->json([
@@ -244,41 +232,31 @@ class UserController extends Controller
                     'account_number' => $request->account_number,
                     'account_name'   => $accountName,
                 ],
-            ], 200);
-
-        } catch (\Throwable $e) {
-            Log::error('Bank update error', [
-                'user_id' => $user->id,
-                'error'   => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'error' => 'An unexpected error occurred while updating bank details.',
-            ], 500);
+        } catch (\Throwable $e) {
+            Log::error('Bank update error', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+            return response()->json(['error' => 'An unexpected error occurred.'], 500);
         }
     }
 
     public function getBanks()
     {
         try {
-            $banks = $this->getPaystackBanks();
-            return response()->json(['data' => $banks]);
+            return response()->json(['data' => $this->getPaystackBanks()]);
         } catch (\Throwable $e) {
-            Log::error('Failed to fetch banks', ['error' => $e->getMessage()]);
             return response()->json(['error' => 'Failed to fetch bank list.'], 500);
         }
     }
 
-    private function getPaystackBanks()
+    private function getPaystackBanks(): array
     {
         return Cache::remember('paystack_banks', now()->addHours(12), function () {
             $response = Http::withToken(config('services.paystack.secret_key'))
                 ->get('https://api.paystack.co/bank');
-
             if (! $response->successful()) {
-                throw new \Exception('Unable to fetch bank list from Paystack.');
+                throw new \Exception('Unable to fetch bank list.');
             }
-
             return $response->json()['data'];
         });
     }
@@ -298,24 +276,13 @@ class UserController extends Controller
                 ]);
 
             if (! $response->successful()) {
-                Log::error('Paystack account verification failed', [
-                    'status'         => $response->status(),
-                    'account_number' => $request->account_number,
-                    'bank_code'      => $request->bank_code,
-                ]);
-
-                return response()->json(['error' => 'Verification failed. Please try again later.'], 400);
+                return response()->json(['error' => 'Verification failed.'], 400);
             }
 
             return response()->json($response->json());
-        } catch (\Exception $e) {
-            Log::error('Error verifying account with Paystack', [
-                'message'        => $e->getMessage(),
-                'account_number' => $request->account_number,
-                'bank_code'      => $request->bank_code,
-            ]);
 
-            return response()->json(['error' => 'An unexpected error occurred while verifying your account.'], 500);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'An unexpected error occurred.'], 500);
         }
     }
 
@@ -324,25 +291,15 @@ class UserController extends Controller
         try {
             $user = JWTAuth::parseToken()->authenticate();
 
-            if (! $user) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
-            }
-
             $landsOwned = DB::table('user_land')
-                ->where('user_id', $user->id)
-                ->where('units', '>', 0)
-                ->distinct('land_id')
-                ->count('land_id');
+                ->where('user_id', $user->id)->where('units', '>', 0)
+                ->distinct('land_id')->count('land_id');
 
             $unitsOwned = DB::table('user_land')
-                ->where('user_id', $user->id)
-                ->sum('units');
+                ->where('user_id', $user->id)->sum('units');
 
             $investedData = DB::table('purchases')
-                ->select(
-                    DB::raw('SUM(total_amount_paid_kobo) as total_paid'),
-                    DB::raw('SUM(total_amount_received_kobo) as total_received')
-                )
+                ->select(DB::raw('SUM(total_amount_paid_kobo) as total_paid, SUM(total_amount_received_kobo) as total_received'))
                 ->where('user_id', $user->id)
                 ->whereIn('status', ['completed', 'partially_sold'])
                 ->first();
@@ -350,39 +307,58 @@ class UserController extends Controller
             $totalInvestedKobo = ($investedData->total_paid ?? 0) - ($investedData->total_received ?? 0);
 
             $totalWithdrawn = DB::table('withdrawals')
-                ->where('user_id', $user->id)
-                ->where('status', 'completed')
-                ->sum('amount_kobo') / 100;
+                ->where('user_id', $user->id)->where('status', 'completed')
+                ->sum('amount_kobo');
 
             $pendingWithdrawals = DB::table('withdrawals')
-                ->where('user_id', $user->id)
-                ->where('status', 'pending')
-                ->count();
+                ->where('user_id', $user->id)->where('status', 'pending')->count();
 
-            $balance = $user->balance_kobo / 100;
+            $totalRewardsClaimed = DB::table('referral_rewards')
+                ->where('user_id', $user->id)->where('claimed', true)
+                ->sum('amount_kobo');
 
             return response()->json([
                 'success' => true,
                 'data'    => [
-                    'lands_owned'        => $landsOwned,
-                    'units_owned'        => $unitsOwned,
-                    'total_invested'     => $totalInvestedKobo / 100,
-                    'total_withdrawn'    => $totalWithdrawn,
-                    'pending_withdrawals' => $pendingWithdrawals,
-                    'balance'            => $balance,
+                    'lands_owned'                => $landsOwned,
+                    'units_owned'                => $unitsOwned,
+                    'total_invested'             => $totalInvestedKobo / 100,
+                    'total_invested_kobo'        => $totalInvestedKobo,
+                    'total_withdrawn'            => $totalWithdrawn / 100,
+                    'total_withdrawn_kobo'       => $totalWithdrawn,
+                    'pending_withdrawals'        => $pendingWithdrawals,
+                    'balance'                    => $user->balance_kobo / 100,
+                    'balance_kobo'               => $user->balance_kobo,
+                    'rewards_balance'            => $user->rewards_balance_kobo / 100,
+                    'rewards_balance_kobo'       => $user->rewards_balance_kobo,
+                    'total_spendable'            => $user->total_spendable_kobo / 100,
+                    'total_spendable_kobo'       => $user->total_spendable_kobo,
+                    'total_rewards_claimed'      => $totalRewardsClaimed / 100,
+                    'total_rewards_claimed_kobo' => $totalRewardsClaimed,
+                    'withdrawal_daily_limit'          => $this->dailyLimitKobo() / 100,
+                    'withdrawal_daily_used_kobo'      => $user->withdrawal_day === now()->toDateString()
+                        ? $user->withdrawal_daily_total_kobo : 0,
+                    'withdrawal_daily_remaining_kobo' => $this->dailyRemainingKobo($user),
                 ],
             ]);
-        } catch (\Exception $e) {
-            Log::error('getUserStats error', [
-                'user_id' => $user->id ?? null,
-                'message' => $e->getMessage(),
-            ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Error fetching stats',
-            ], 500);
+        } catch (\Exception $e) {
+            Log::error('getUserStats error', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Error fetching stats.'], 500);
         }
+    }
+
+    private function dailyLimitKobo(): int
+    {
+        return (int) config('services.withdrawals.daily_limit_kobo', 50_000_000);
+    }
+
+    private function dailyRemainingKobo($user): int
+    {
+        $used = $user->withdrawal_day === now()->toDateString()
+            ? $user->withdrawal_daily_total_kobo
+            : 0;
+        return max(0, $this->dailyLimitKobo() - $used);
     }
 
     public function getUserTransactions()
@@ -390,26 +366,20 @@ class UserController extends Controller
         try {
             $user = JWTAuth::parseToken()->authenticate();
 
-            if (! $user) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
-            }
-
             $deposits = Deposit::where('user_id', $user->id)
                 ->select('id', 'amount_kobo', 'transaction_fee', 'total_kobo', 'status', 'created_at')
-                ->get()
-                ->map(fn ($d) => [
+                ->get()->map(fn ($d) => [
                     'type'            => 'Deposit',
                     'amount'          => $d->amount_kobo / 100,
-                    'transaction_fee' => $d->transaction_fee / 100,
-                    'total'           => $d->total_kobo / 100,
+                    'transaction_fee' => ($d->transaction_fee ?? 0) / 100,
+                    'total'           => ($d->total_kobo ?? $d->amount_kobo) / 100,
                     'status'          => ucfirst($d->status),
                     'date'            => $d->created_at->toIso8601String(),
                 ]);
 
             $withdrawals = Withdrawal::where('user_id', $user->id)
                 ->select('id', 'amount_kobo', 'status', 'created_at')
-                ->get()
-                ->map(fn ($w) => [
+                ->get()->map(fn ($w) => [
                     'type'   => 'Withdrawal',
                     'amount' => $w->amount_kobo / 100,
                     'status' => ucfirst($w->status),
@@ -419,40 +389,24 @@ class UserController extends Controller
             $landTransactions = Transaction::where('user_id', $user->id)
                 ->select('id', 'land_id', 'type', 'units', 'amount_kobo', 'status', 'created_at')
                 ->with('land:id,title')
-                ->get()
-                ->map(function ($t) {
-                    return [
-                        'type'   => ucfirst($t->type),
-                        'land'   => $t->land->title ?? 'Unknown Land',
-                        'amount' => abs($t->amount_kobo) / 100,
-                        'units'  => abs($t->units),
-                        'status' => ucfirst($t->status),
-                        'date'   => $t->created_at->toIso8601String(),
-                    ];
-                });
+                ->get()->map(fn ($t) => [
+                    'type'   => ucfirst($t->type),
+                    'land'   => $t->land->title ?? 'Unknown',
+                    'amount' => abs($t->amount_kobo) / 100,
+                    'units'  => abs($t->units),
+                    'status' => ucfirst($t->status),
+                    'date'   => $t->created_at->toIso8601String(),
+                ]);
 
             $transactions = collect()
-                ->merge($deposits)
-                ->merge($withdrawals)
-                ->merge($landTransactions)
-                ->sortByDesc('date')
-                ->values();
+                ->merge($deposits)->merge($withdrawals)->merge($landTransactions)
+                ->sortByDesc('date')->values();
 
-            return response()->json([
-                'success' => true,
-                'data'    => $transactions,
-            ]);
+            return response()->json(['success' => true, 'data' => $transactions]);
 
         } catch (\Exception $e) {
-            Log::error('getUserTransactions error', [
-                'user_id' => $user->id ?? null,
-                'message' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Error fetching transactions',
-            ], 500);
+            Log::error('getUserTransactions error', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Error fetching transactions.'], 500);
         }
     }
 
@@ -460,22 +414,10 @@ class UserController extends Controller
     {
         try {
             $user = JWTAuth::parseToken()->authenticate();
-
-            return response()->json([
-                'success' => true,
-                'data'    => PortfolioService::summary($user->id),
-            ]);
-
+            return response()->json(['success' => true, 'data' => PortfolioService::summary($user->id)]);
         } catch (\Exception $e) {
-            Log::error('Portfolio summary error', [
-                'user_id' => $user->id ?? null,
-                'error'   => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Error fetching portfolio summary',
-            ], 500);
+            Log::error('Portfolio summary error', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Error fetching portfolio summary.'], 500);
         }
     }
 }
