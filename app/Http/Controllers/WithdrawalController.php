@@ -25,7 +25,7 @@ class WithdrawalController extends Controller
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            // Minimum ₦5,000 = 500,000 kobo (consistent kobo units)
+            // Minimum ₦5,000 = 500,000 kobo
             'amount' => 'required|integer|min:500000',
         ]);
 
@@ -43,7 +43,6 @@ class WithdrawalController extends Controller
             $transferred = false;
 
             DB::transaction(function () use ($user, $request, $referenceCode, &$transferred) {
-                // Lock user row first — all checks and writes happen inside the transaction
                 $lockedUser = \App\Models\User::lockForUpdate()->find($user->id);
 
                 if ($lockedUser->balance_kobo < $request->amount) {
@@ -69,7 +68,6 @@ class WithdrawalController extends Controller
                     ));
                 }
 
-                // Debit balance and update daily counter atomically
                 $lockedUser->balance_kobo                -= $request->amount;
                 $lockedUser->withdrawal_daily_total_kobo  = $newDailyTotal;
                 $lockedUser->withdrawal_day               = $today;
@@ -103,7 +101,6 @@ class WithdrawalController extends Controller
                 return $this->simulateTestWithdrawal($referenceCode);
             }
 
-            // Reload user for Paystack call (outside transaction)
             $user->refresh();
             $this->initiatePaystackTransfer($user, $request->amount, $referenceCode);
 
@@ -115,7 +112,6 @@ class WithdrawalController extends Controller
         } catch (\Exception $e) {
             Log::error('Withdrawal request failed', ['error' => $e->getMessage(), 'user_id' => $user->id]);
 
-            // Surface limit/balance errors as 422, everything else as 500
             $clientErrors = ['Insufficient balance.', 'Daily withdrawal limit'];
             foreach ($clientErrors as $msg) {
                 if (str_starts_with($e->getMessage(), $msg)) {
@@ -186,11 +182,29 @@ class WithdrawalController extends Controller
         return response()->json(['status' => 'handled']);
     }
 
+    /**
+     * Decrement the daily withdrawal total when a withdrawal is reversed/failed.
+     *
+     * Only decrements if the reversal happened on the same calendar day as the
+     * original withdrawal. If the day has rolled over, the counter already reset
+     * to 0 on the next withdrawal request, so we must not subtract from the new
+     * day's accumulation.
+     */
     private function decrementDailyTotal($user, int $amountKobo): void
     {
-        $user->update([
-            'withdrawal_daily_total_kobo' => DB::raw("GREATEST(0, withdrawal_daily_total_kobo - {$amountKobo})"),
-        ]);
+        $today = now()->toDateString();
+
+        // Only adjust the counter if we are still on the same day the
+        // withdrawal was initiated. If the day has changed the counter
+        // will be reset to 0 on the next withdrawal attempt anyway.
+        DB::table('users')
+            ->where('id', $user->id)
+            ->where('withdrawal_day', $today)
+            ->update([
+                'withdrawal_daily_total_kobo' => DB::raw(
+                    "GREATEST(0, withdrawal_daily_total_kobo - {$amountKobo})"
+                ),
+            ]);
     }
 
     public function retryPendingWithdrawals()

@@ -83,7 +83,7 @@ class UserController extends Controller
 
         $request->validate([
             'pin'              => 'required|digits:4',
-            'pin_confirmation' => 'required|same:pin',  
+            'pin_confirmation' => 'required|same:pin',
         ]);
 
         if ($user->transaction_pin) {
@@ -101,9 +101,9 @@ class UserController extends Controller
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            'old_pin'          => 'required|digits:4',
-            'new_pin'          => 'required|digits:4',
-            'new_pin_confirmation' => 'required|same:new_pin',  
+            'old_pin'             => 'required|digits:4',
+            'new_pin'             => 'required|digits:4',
+            'new_pin_confirmation' => 'required|same:new_pin',
         ]);
 
         if (! Hash::check($request->old_pin, $user->transaction_pin)) {
@@ -134,6 +134,10 @@ class UserController extends Controller
         return response()->json(['message' => 'If that email is registered, a PIN reset code has been sent.']);
     }
 
+    /**
+     * Verify PIN reset code.
+     *
+     */
     public function verifyPinResetCode(Request $request)
     {
         $request->validate(['email' => 'required|email', 'code' => 'required|numeric']);
@@ -153,31 +157,40 @@ class UserController extends Controller
         return response()->json(['message' => 'Code verified.']);
     }
 
+    /**
+     * Reset transaction PIN — atomically re-validates the code and expiry
+     * in a single DB transaction, preventing TOCTOU race conditions.
+     */
     public function resetTransactionPin(Request $request)
     {
         $request->validate([
-            'email'            => 'required|email',
-            'code'             => 'required|numeric',
-            'new_pin'          => 'required|digits:4',
-            'new_pin_confirmation' => 'required|same:new_pin',  // Fix #7
+            'email'               => 'required|email',
+            'code'                => 'required|numeric',
+            'new_pin'             => 'required|digits:4',
+            'new_pin_confirmation' => 'required|same:new_pin',
         ]);
 
-        $user = User::where('email', $request->email)->first();
+        DB::transaction(function () use ($request) {
+            // Lock the user row so concurrent resets queue behind this one
+            $user = User::where('email', $request->email)
+                ->lockForUpdate()
+                ->first();
 
-        if (
-            ! $user ||
-            ! $user->pin_reset_code ||
-            ! $user->pin_reset_expires_at ||
-            now()->greaterThan($user->pin_reset_expires_at) ||
-            ! Hash::check((string) $request->code, $user->pin_reset_code)
-        ) {
-            return response()->json(['error' => 'Invalid or expired code.'], 400);
-        }
+            if (
+                ! $user ||
+                ! $user->pin_reset_code ||
+                ! $user->pin_reset_expires_at ||
+                now()->greaterThan($user->pin_reset_expires_at) ||
+                ! Hash::check((string) $request->code, $user->pin_reset_code)
+            ) {
+                abort(400, 'Invalid or expired code.');
+            }
 
-        $user->transaction_pin      = Hash::make($request->new_pin);
-        $user->pin_reset_code       = null;
-        $user->pin_reset_expires_at = null;
-        $user->save();
+            $user->transaction_pin      = Hash::make($request->new_pin);
+            $user->pin_reset_code       = null;
+            $user->pin_reset_expires_at = null;
+            $user->save();
+        });
 
         return response()->json(['message' => 'Transaction PIN reset successfully.']);
     }
@@ -221,7 +234,7 @@ class UserController extends Controller
                 'bank_code'      => $bankCode,
                 'bank_name'      => $request->bank_name,
                 'account_name'   => $accountName,
-                'recipient_code' => null, 
+                'recipient_code' => null,
             ]);
 
             return response()->json([

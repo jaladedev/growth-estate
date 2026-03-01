@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\User;
 use App\Models\Referral;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Hash;
 use Tymon\JWTAuth\Facades\JWTAuth;
@@ -237,6 +238,9 @@ class AuthController extends Controller
         return $this->sendSuccessResponse([], 'If that email is registered, a reset code has been sent.');
     }
 
+    /**
+     * Verify reset code — for UX only (shows user the code is valid).
+     */
     public function verifyResetCode(Request $request)
     {
         $request->validate([
@@ -256,12 +260,18 @@ class AuthController extends Controller
             return $this->sendErrorResponse('Invalid or expired reset code.', 400);
         }
 
+        // Mark as verified so the UI can proceed to the new-password step.
+        // resetPassword() will re-validate independently.
         $user->password_reset_verified = true;
         $user->save();
 
         return $this->sendSuccessResponse([], 'Reset code verified. You can now reset your password.');
     }
 
+    /**
+     * Reset password — atomically re-validates the code and expiry inside a
+     * locked transaction to prevent TOCTOU race conditions.
+     */
     public function resetPassword(Request $request)
     {
         try {
@@ -272,6 +282,7 @@ class AuthController extends Controller
                     'regex:/[A-Z]/', 'regex:/[a-z]/',
                     'regex:/[0-9]/', 'regex:/[@$!%*?&#]/',
                 ],
+                'reset_code' => 'required|string|size:6',
             ], [
                 'password.min'       => 'The password must be at least 8 characters long.',
                 'password.regex'     => 'The password must include at least one uppercase letter, one lowercase letter, one number, and one special character.',
@@ -281,28 +292,47 @@ class AuthController extends Controller
             return $this->sendErrorResponse('Password validation errors occurred', 422, $e->validator->errors());
         }
 
-        $user = User::where('email', $request->email)->first();
+        try {
+            DB::transaction(function () use ($request) {
+                // Lock the user row — concurrent resets queue behind this one
+                $user = User::where('email', $request->email)
+                    ->lockForUpdate()
+                    ->first();
 
-        if (! $user) {
-            return $this->sendErrorResponse('Invalid request.', 400);
+                if (! $user) {
+                    abort(400, 'Invalid request.');
+                }
+
+                // Expiry is the primary guard — checked first
+                if (
+                    ! $user->password_reset_code ||
+                    ! $user->password_reset_code_expires_at ||
+                    $user->password_reset_code_expires_at->isPast()
+                ) {
+                    abort(400, 'Reset code has expired. Please request a new one.');
+                }
+
+                // Code integrity check
+                if (! Hash::check((string) $request->reset_code, $user->password_reset_code)) {
+                    abort(400, 'Invalid reset code.');
+                }
+
+                $user->password                       = Hash::make($request->password);
+                $user->password_reset_code            = null;
+                $user->password_reset_code_expires_at = null;
+                $user->password_reset_verified        = false;
+                $user->save();
+            });
+        } catch (\Illuminate\Http\Exceptions\HttpResponseException $e) {
+            throw $e; // Let abort() responses pass through
+        } catch (\Exception $e) {
+            // Re-surface abort() messages as proper error responses
+            if ($e->getCode() >= 400 && $e->getCode() < 500) {
+                return $this->sendErrorResponse($e->getMessage(), $e->getCode());
+            }
+            Log::error('Password reset failed', ['error' => $e->getMessage()]);
+            return $this->sendErrorResponse('An unexpected error occurred. Please try again.', 500);
         }
-
-        if (
-            ! $user->password_reset_verified ||
-            ! $user->password_reset_code_expires_at ||
-            $user->password_reset_code_expires_at->isPast()
-        ) {
-            return $this->sendErrorResponse(
-                'Please verify the reset code before setting a new password.',
-                400
-            );
-        }
-
-        $user->password                       = Hash::make($request->password);
-        $user->password_reset_code            = null;
-        $user->password_reset_code_expires_at = null;
-        $user->password_reset_verified        = false;
-        $user->save();
 
         return $this->sendSuccessResponse([], 'Password has been reset successfully.');
     }
