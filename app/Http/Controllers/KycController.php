@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\KycVerification;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class KycController extends Controller
@@ -12,19 +13,19 @@ class KycController extends Controller
     {
         $kyc = auth()->user()->kycVerification;
 
-        if (!$kyc) {
+        if (! $kyc) {
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'status'       => 'not_submitted',
-                    'is_verified'  => false,
+                'data'    => [
+                    'status'      => 'not_submitted',
+                    'is_verified' => false,
                 ],
             ]);
         }
 
         return response()->json([
             'success' => true,
-            'data' => [
+            'data'    => [
                 'status'           => $kyc->status,
                 'is_verified'      => $kyc->status === 'approved',
                 'submission_date'  => $kyc->created_at,
@@ -68,69 +69,78 @@ class KycController extends Controller
             'selfie'        => 'required|image|max:5120',
         ]);
 
+        // Store files to disk FIRST (outside the transaction so we can
+        // roll them back if the DB write fails), then wrap only the DB writes
+        // in a transaction. On any DB failure, delete the uploaded files.
         $idFrontPath = $request->file('id_front')->store('kyc/ids', 'local');
         $idBackPath  = $request->hasFile('id_back')
             ? $request->file('id_back')->store('kyc/ids', 'local')
             : null;
         $selfiePath  = $request->file('selfie')->store('kyc/selfies', 'local');
 
-        $kyc = $user->kycVerification()->updateOrCreate(
-            ['user_id' => $user->id],
-            [
-                'full_name'      => $data['full_name'],
-                'date_of_birth'  => $data['date_of_birth'],
-                'phone_number'   => $data['phone_number'],
-                'address'        => $data['address'],
-                'city'           => $data['city'],
-                'state'          => $data['state'],
-                'country'        => $data['country'] ?? 'Nigeria',
-                'id_type'        => $data['id_type'],
-                'id_number'      => $data['id_number'],
-                'id_front_path'  => $idFrontPath,
-                'id_back_path'   => $idBackPath,
-                'selfie_path'    => $selfiePath,
-                'status'         => 'pending',
-                'rejection_reason' => null,
-            ]
-        );
+        try {
+            $kyc = DB::transaction(function () use ($user, $data, $idFrontPath, $idBackPath, $selfiePath) {
+                return $user->kycVerification()->updateOrCreate(
+                    ['user_id' => $user->id],
+                    [
+                        'full_name'        => $data['full_name'],
+                        'date_of_birth'    => $data['date_of_birth'],
+                        'phone_number'     => $data['phone_number'],
+                        'address'          => $data['address'],
+                        'city'             => $data['city'],
+                        'state'            => $data['state'],
+                        'country'          => $data['country'] ?? 'Nigeria',
+                        'id_type'          => $data['id_type'],
+                        'id_number'        => $data['id_number'],
+                        'id_front_path'    => $idFrontPath,
+                        'id_back_path'     => $idBackPath,
+                        'selfie_path'      => $selfiePath,
+                        'status'           => 'pending',
+                        'rejection_reason' => null,
+                    ]
+                );
+            });
+        } catch (\Throwable $e) {
+            foreach (array_filter([$idFrontPath, $idBackPath, $selfiePath]) as $path) {
+                Storage::disk('local')->delete($path);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'KYC submission failed. Please try again.',
+            ], 500);
+        }
 
         return response()->json([
             'success' => true,
             'message' => 'KYC submitted successfully. We will review it shortly.',
-            'data' => [
+            'data'    => [
                 'status'       => $kyc->status,
                 'submitted_at' => $kyc->created_at,
             ],
         ]);
     }
 
+    
     public function getImageUrl(Request $request, $id, string $imageType)
     {
-        $kyc = KycVerification::findOrFail($id);
-
-        // Only the owner or an admin can get image URLs
+        $kyc  = KycVerification::findOrFail($id);
         $user = auth()->user();
-        if ($user->id !== $kyc->user_id && !$user->is_admin) {
+
+        if ($user->id !== $kyc->user_id && ! $user->is_admin) {
             abort(403);
         }
 
-        $path = match ($imageType) {
-            'id_front' => $kyc->id_front_path,
-            'id_back'  => $kyc->id_back_path,
-            'selfie'   => $kyc->selfie_path,
-            default    => abort(404),
-        };
-
-        if (!$path || !Storage::disk('local')->exists($path)) {
-            return response()->json(['error' => 'Image not found'], 404);
+        $allowed = ['id_front', 'id_back', 'selfie'];
+        if (! in_array($imageType, $allowed, true)) {
+            return response()->json(['error' => 'Invalid image type.'], 422);
         }
 
-        // Generate a temporary signed URL (5 minutes)
-        $temporaryUrl = Storage::disk('local')->temporaryUrl($path, now()->addMinutes(5));
+        $url = route('kyc.image', ['id' => $id, 'imageType' => $imageType]);
 
         return response()->json([
-            'url'        => $temporaryUrl,
-            'expires_at' => now()->addMinutes(5)->toIso8601String(),
+            'url'        => $url,
+            'expires_at' => null, // streamed directly — no expiry needed
         ]);
     }
 
@@ -156,14 +166,13 @@ class KycController extends Controller
 
         $kyc = KycVerification::with('user:id,name,email')->findOrFail($id);
 
-        $data                  = $kyc->toArray();
-        $data['id_front_url']  = route('kyc.image', ['id' => $kyc->id, 'imageType' => 'id_front']);
-        $data['id_back_url']   = $kyc->id_back_path
+        $data                 = $kyc->toArray();
+        $data['id_front_url'] = route('kyc.image', ['id' => $kyc->id, 'imageType' => 'id_front']);
+        $data['id_back_url']  = $kyc->id_back_path
             ? route('kyc.image', ['id' => $kyc->id, 'imageType' => 'id_back'])
             : null;
-        $data['selfie_url']    = route('kyc.image', ['id' => $kyc->id, 'imageType' => 'selfie']);
+        $data['selfie_url']   = route('kyc.image', ['id' => $kyc->id, 'imageType' => 'selfie']);
 
-        // Remove raw paths from response
         unset($data['id_front_path'], $data['id_back_path'], $data['selfie_path']);
 
         return response()->json(['success' => true, 'data' => $data]);
@@ -222,7 +231,7 @@ class KycController extends Controller
         return response()->json(['success' => true, 'message' => 'Resubmission requested', 'data' => $kyc]);
     }
 
-    private function authorizeAdmin()
+    private function authorizeAdmin(): void
     {
         abort_unless(auth()->user()?->is_admin, 403);
     }

@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\LedgerEntry;
 use App\Models\Referral;
 use App\Models\ReferralReward;
 use App\Models\User;
@@ -64,12 +63,12 @@ class ReferralController extends Controller
         ]);
     }
 
-    public function applyReferral(User $newUser, string $referralCode)
+    public function applyReferral(User $newUser, string $referralCode): ?Referral
     {
         $referrer = User::where('referral_code', $referralCode)->first();
 
         if (! $referrer) {
-            return false;
+            return null;
         }
 
         $newUser->update(['referred_by' => $referrer->id]);
@@ -81,51 +80,10 @@ class ReferralController extends Controller
         ]);
     }
 
-    public function completeReferral(User $referredUser)
-    {
-        $referral = Referral::where('referred_user_id', $referredUser->id)
-            ->where('status', 'pending')
-            ->first();
-
-        if (! $referral) {
-            return null;
-        }
-
-        DB::transaction(function () use ($referral) {
-            $referral->markCompleted();
-            $this->createReferrerReward($referral);
-            $this->createReferredUserReward($referral);
-        });
-
-        return $referral;
-    }
-
-    private function createReferrerReward(Referral $referral): void
-    {
-        ReferralReward::create([
-            'referral_id' => $referral->id,
-            'user_id'     => $referral->referrer_id,
-            'reward_type' => 'cashback',
-            'amount_kobo' => 5000, // ₦50
-            'claimed'     => false,
-        ]);
-    }
-
-    private function createReferredUserReward(Referral $referral): void
-    {
-        ReferralReward::create([
-            'referral_id'         => $referral->id,
-            'user_id'             => $referral->referred_user_id,
-            'reward_type'         => 'discount',
-            'discount_percentage' => 10,
-            'claimed'             => false,
-        ]);
-    }
-
     /**
-     * Claim a reward.
+     * Claim a pending reward.
      */
-    public function claimReward($rewardId)
+    public function claimReward(int $rewardId)
     {
         $reward = ReferralReward::where('id', $rewardId)
             ->where('user_id', auth()->id())
@@ -164,7 +122,6 @@ class ReferralController extends Controller
                     break;
 
                 case 'bonus_units':
-                    // Requires land context — flagged for manual processing
                     Log::info('Bonus units reward claimed — manual processing required', [
                         'reward_id' => $reward->id,
                         'user_id'   => $reward->user_id,
@@ -172,7 +129,6 @@ class ReferralController extends Controller
                     break;
 
                 case 'discount':
-                    // Applied at checkout — marking claimed is sufficient
                     break;
             }
         });

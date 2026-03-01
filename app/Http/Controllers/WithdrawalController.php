@@ -25,7 +25,8 @@ class WithdrawalController extends Controller
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            'amount' => 'required|integer|min:500000', 
+            // Minimum ₦5,000 = 500,000 kobo (consistent kobo units)
+            'amount' => 'required|integer|min:500000',
         ]);
 
         if (! $user->is_kyc_verified) {
@@ -36,28 +37,48 @@ class WithdrawalController extends Controller
             return response()->json(['error' => 'Bank details are missing.'], 400);
         }
 
-        if ($user->balance_kobo < $request->amount) {
-            return response()->json(['error' => 'Insufficient balance.'], 400);
-        }
-
-        $this->checkDailyLimit($user, $request->amount);
+        $referenceCode = 'WD-' . now()->format('Ymd-His') . '-' . Str::random(6);
 
         try {
-            $referenceCode = 'WD-' . now()->format('Ymd-His') . '-' . Str::random(6);
+            $transferred = false;
 
-            DB::transaction(function () use ($user, $request, $referenceCode) {
-                // Re-lock user row inside transaction to prevent race conditions
-                $user = \App\Models\User::lockForUpdate()->find($user->id);
+            DB::transaction(function () use ($user, $request, $referenceCode, &$transferred) {
+                // Lock user row first — all checks and writes happen inside the transaction
+                $lockedUser = \App\Models\User::lockForUpdate()->find($user->id);
 
-                if ($user->balance_kobo < $request->amount) {
-                    throw new \Exception('Insufficient balance (race condition check).');
+                if ($lockedUser->balance_kobo < $request->amount) {
+                    throw new \Exception('Insufficient balance.');
                 }
 
-                $user->decrement('balance_kobo', $request->amount);
-                $balanceAfter = $user->fresh()->balance_kobo;
+                // ── Daily limit check & increment (atomic, inside lock) ────────
+                $today = now()->toDateString();
+
+                if ($lockedUser->withdrawal_day !== $today) {
+                    $lockedUser->withdrawal_daily_total_kobo = 0;
+                    $lockedUser->withdrawal_day              = $today;
+                }
+
+                $newDailyTotal = $lockedUser->withdrawal_daily_total_kobo + $request->amount;
+
+                if ($newDailyTotal > $this->dailyLimitKobo()) {
+                    $remaining = max(0, $this->dailyLimitKobo() - $lockedUser->withdrawal_daily_total_kobo);
+                    throw new \Exception(sprintf(
+                        'Daily withdrawal limit of ₦%s reached. Remaining today: ₦%s.',
+                        number_format($this->dailyLimitKobo() / 100, 2),
+                        number_format($remaining / 100, 2)
+                    ));
+                }
+
+                // Debit balance and update daily counter atomically
+                $lockedUser->balance_kobo                -= $request->amount;
+                $lockedUser->withdrawal_daily_total_kobo  = $newDailyTotal;
+                $lockedUser->withdrawal_day               = $today;
+                $lockedUser->save();
+
+                $balanceAfter = $lockedUser->balance_kobo;
 
                 LedgerEntry::create([
-                    'uid'           => $user->id,    
+                    'uid'           => $lockedUser->id,
                     'type'          => 'withdrawal',
                     'amount_kobo'   => $request->amount,
                     'balance_after' => $balanceAfter,
@@ -65,19 +86,25 @@ class WithdrawalController extends Controller
                 ]);
 
                 Withdrawal::create([
-                    'user_id'     => $user->id,
+                    'user_id'     => $lockedUser->id,
                     'amount_kobo' => $request->amount,
                     'status'      => 'pending',
                     'reference'   => $referenceCode,
                 ]);
 
-                $this->incrementDailyTotal($user, $request->amount);
+                $transferred = true;
             });
+
+            if (! $transferred) {
+                return response()->json(['error' => 'Withdrawal could not be processed.'], 500);
+            }
 
             if (config('services.paystack.test_mode')) {
                 return $this->simulateTestWithdrawal($referenceCode);
             }
 
+            // Reload user for Paystack call (outside transaction)
+            $user->refresh();
             $this->initiatePaystackTransfer($user, $request->amount, $referenceCode);
 
             return response()->json([
@@ -87,42 +114,17 @@ class WithdrawalController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Withdrawal request failed', ['error' => $e->getMessage(), 'user_id' => $user->id]);
+
+            // Surface limit/balance errors as 422, everything else as 500
+            $clientErrors = ['Insufficient balance.', 'Daily withdrawal limit'];
+            foreach ($clientErrors as $msg) {
+                if (str_starts_with($e->getMessage(), $msg)) {
+                    return response()->json(['error' => $e->getMessage()], 422);
+                }
+            }
+
             return response()->json(['error' => 'Failed to initiate withdrawal.'], 500);
         }
-    }
-
-    private function checkDailyLimit($user, int $amountKobo): void
-    {
-        $today = now()->toDateString();
-
-        // Reset counter if it's a new day
-        if ($user->withdrawal_day !== $today) {
-            $user->update([
-                'withdrawal_daily_total_kobo' => 0,
-                'withdrawal_day'              => $today,
-            ]);
-            $user->refresh();
-        }
-
-        $newTotal = $user->withdrawal_daily_total_kobo + $amountKobo;
-
-        if ($newTotal > $this->dailyLimitKobo()) {
-            $remaining = max(0, $this->dailyLimitKobo() - $user->withdrawal_daily_total_kobo);
-            abort(422, sprintf(
-                'Daily withdrawal limit of ₦%s reached. Remaining today: ₦%s.',
-                number_format($this->dailyLimitKobo() / 100, 2),
-                number_format($remaining / 100, 2)
-            ));
-        }
-    }
-
-    private function incrementDailyTotal($user, int $amountKobo): void
-    {
-        $today = now()->toDateString();
-        $user->update([
-            'withdrawal_daily_total_kobo' => DB::raw("withdrawal_daily_total_kobo + {$amountKobo}"),
-            'withdrawal_day'              => $today,
-        ]);
     }
 
     public function handlePaystackCallback(Request $request)
@@ -140,8 +142,8 @@ class WithdrawalController extends Controller
             abort(403, 'Unauthorized webhook');
         }
 
-        $reference = $request->input('data.reference');
-        $status    = $request->input('data.status');
+        $reference  = $request->input('data.reference');
+        $status     = $request->input('data.status');
         $withdrawal = Withdrawal::firstWhere('reference', $reference);
 
         if (! $withdrawal) {
@@ -153,7 +155,6 @@ class WithdrawalController extends Controller
         }
 
         DB::transaction(function () use ($withdrawal, $status) {
-            // Re-check inside transaction after lock
             $withdrawal = Withdrawal::lockForUpdate()->find($withdrawal->id);
             if (in_array($withdrawal->status, ['completed', 'failed'], true)) {
                 return;
@@ -166,6 +167,7 @@ class WithdrawalController extends Controller
             } elseif ($status === 'failed') {
                 $withdrawal->user->increment('balance_kobo', $withdrawal->amount_kobo);
                 $balanceAfter = $withdrawal->user->fresh()->balance_kobo;
+
                 $this->decrementDailyTotal($withdrawal->user, $withdrawal->amount_kobo);
 
                 LedgerEntry::create([
@@ -193,7 +195,6 @@ class WithdrawalController extends Controller
 
     public function retryPendingWithdrawals()
     {
-        // Atomically claim all pending withdrawals by setting status = processing
         $claimed = DB::table('withdrawals')
             ->where('status', 'pending')
             ->update(['status' => 'processing', 'updated_at' => now()]);
@@ -207,7 +208,7 @@ class WithdrawalController extends Controller
         foreach ($withdrawals as $withdrawal) {
             if (! $withdrawal->reference) {
                 Log::error('Skipping withdrawal — missing reference', ['id' => $withdrawal->id]);
-                $withdrawal->update(['status' => 'pending']); // release back
+                $withdrawal->update(['status' => 'pending']);
                 continue;
             }
 
@@ -220,7 +221,7 @@ class WithdrawalController extends Controller
                 Log::info('Withdrawal retried', ['reference' => $withdrawal->reference]);
             } catch (\Exception $e) {
                 Log::error('Retry failed', ['reference' => $withdrawal->reference, 'error' => $e->getMessage()]);
-                $withdrawal->update(['status' => 'pending']); // release so it can be retried again
+                $withdrawal->update(['status' => 'pending']);
             }
         }
 

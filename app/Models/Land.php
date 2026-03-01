@@ -14,29 +14,30 @@ class Land extends Model
     protected $fillable = [
         'title', 'location', 'size', 'total_units',
         'available_units', 'is_available', 'description', 'coordinates',
-        'lat', 'lng'
+        'lat', 'lng',
     ];
 
     protected $attributes = [
-        'total_units' => 0,
+        'total_units'     => 0,
         'available_units' => 0,
-        'is_available' => true,
+        'is_available'    => true,
     ];
 
     protected $casts = [
-        'size' => 'float',  
-        'total_units' => 'integer',
+        'size'            => 'float',
+        'total_units'     => 'integer',
         'available_units' => 'integer',
-        'is_available' => 'boolean',
+        'is_available'    => 'boolean',
     ];
 
     protected $appends = [
         'units_sold',
         'sold_percentage',
         'map_color',
-        'coordinates_geojson',
         'current_price_per_unit_kobo',
     ];
+
+    // ── Relationships ─────────────────────────────────────────────────────────
 
     public function transactions()
     {
@@ -78,33 +79,39 @@ class Land extends Model
         return $this->hasMany(LandImage::class);
     }
 
-    public function getCurrentPricePerUnitKoboAttribute()
+    // ── Appended accessors ────────────────────────────────────────────────────
+
+    public function getCurrentPricePerUnitKoboAttribute(): int
     {
         return $this->latestPrice?->price_per_unit_kobo ?? 0;
     }
 
-    public function getUnitsSoldAttribute()
+    public function getUnitsSoldAttribute(): int
     {
         return $this->total_units - $this->available_units;
     }
 
-    public function getSoldPercentageAttribute()
+    public function getSoldPercentageAttribute(): float
     {
         if ($this->total_units === 0) return 0;
         return round(($this->units_sold / $this->total_units) * 100, 2);
     }
 
-    public function getMapColorAttribute()
+    public function getMapColorAttribute(): string
     {
         return match (true) {
             $this->sold_percentage < 25 => 'green',
             $this->sold_percentage < 50 => 'yellow',
             $this->sold_percentage < 75 => 'orange',
-            default => 'red',
+            default                     => 'red',
         };
     }
 
-    public function getCoordinatesGeojsonAttribute()
+    /**
+     * Fetch GeoJSON on demand — NOT appended automatically to avoid N+1 queries.
+     * Call this explicitly when you actually need the geometry.
+     */
+    public function getCoordinatesGeojson(): ?string
     {
         return DB::table('lands')
             ->where('id', $this->id)
@@ -112,15 +119,17 @@ class Land extends Model
             ->value('geojson');
     }
 
+    // ── Query scopes ──────────────────────────────────────────────────────────
+
     public function scopeWithinBounds(
         Builder $query,
         float $north,
         float $south,
         float $east,
         float $west
-    ) {
+    ): Builder {
         return $query->whereRaw(
-            "coordinates && ST_MakeEnvelope(?, ?, ?, ?, 4326)",
+            'coordinates && ST_MakeEnvelope(?, ?, ?, ?, 4326)',
             [$west, $south, $east, $north]
         );
     }

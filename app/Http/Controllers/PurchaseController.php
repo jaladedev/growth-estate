@@ -60,7 +60,7 @@ class PurchaseController extends Controller
                         ->first();
 
                     if ($discountReward) {
-                        $discountApplied = (int) floor($totalCost * ($discountReward->discount_percentage / 100));
+                        $discountApplied    = (int) floor($totalCost * ($discountReward->discount_percentage / 100));
                         $discountRewardUsed = $discountReward;
                     }
                 }
@@ -89,11 +89,11 @@ class PurchaseController extends Controller
                 if ($discountRewardUsed) {
                     $discountRewardUsed->update(['claimed' => true, 'claimed_at' => now()]);
                     Log::info('Discount reward applied at checkout', [
-                        'user_id'            => $user->id,
-                        'reward_id'          => $discountRewardUsed->id,
-                        'discount_kobo'      => $discountApplied,
-                        'discount_percent'   => $discountRewardUsed->discount_percentage,
-                        'reference'          => $reference,
+                        'user_id'          => $user->id,
+                        'reward_id'        => $discountRewardUsed->id,
+                        'discount_kobo'    => $discountApplied,
+                        'discount_percent' => $discountRewardUsed->discount_percentage,
+                        'reference'        => $reference,
                     ]);
                 }
 
@@ -124,13 +124,21 @@ class PurchaseController extends Controller
                 $isFirstPurchase = ! Purchase::where('user_id', $user->id)->exists();
 
                 // ── Purchase record (upsert) ──────────────────────────────────
+                $actualAmountPaid = $rewardsUsed + $mainUsed; 
+
                 $purchase = Purchase::lockForUpdate()->firstOrCreate(
                     ['user_id' => $user->id, 'land_id' => $land->id],
-                    ['units' => 0, 'units_sold' => 0, 'total_amount_paid_kobo' => 0,
-                        'total_amount_received_kobo' => 0, 'status' => 'active', 'purchase_date' => now()]
+                    [
+                        'units'                      => 0,
+                        'units_sold'                 => 0,
+                        'total_amount_paid_kobo'     => 0,
+                        'total_amount_received_kobo' => 0,
+                        'status'                     => 'active',
+                        'purchase_date'              => now(),
+                    ]
                 );
                 $purchase->increment('units', $request->units);
-                $purchase->increment('total_amount_paid_kobo', $totalCost); // record full price, not discounted
+                $purchase->increment('total_amount_paid_kobo', $actualAmountPaid);
                 $purchase->reference     = $reference;
                 $purchase->purchase_date = now();
                 $purchase->save();
@@ -147,7 +155,7 @@ class PurchaseController extends Controller
                     'land_id'          => $land->id,
                     'type'             => 'purchase',
                     'units'            => $request->units,
-                    'amount_kobo'      => $totalCost,
+                    'amount_kobo'      => $totalCost,   
                     'status'           => 'completed',
                     'reference'        => $reference,
                     'transaction_date' => now(),
@@ -167,7 +175,7 @@ class PurchaseController extends Controller
                     'discount_percent'          => $discountRewardUsed?->discount_percentage ?? 0,
                     'paid_from_rewards_kobo'    => $rewardsUsed,
                     'paid_from_wallet_kobo'     => $mainUsed,
-                    'total_paid_kobo'           => $rewardsUsed + $mainUsed,
+                    'total_paid_kobo'           => $actualAmountPaid,
                     'remaining_units'           => $land->fresh()->available_units,
                 ]);
             });
@@ -182,7 +190,7 @@ class PurchaseController extends Controller
 
     /**
      * SELL LAND UNITS
-     * Sale proceeds always go to the main wallet — never to rewards.
+     * Sale proceeds go to the main wallet.
      */
     public function sellUnits(Request $request, $landId)
     {
@@ -221,13 +229,13 @@ class PurchaseController extends Controller
                 $land->is_available = true;
                 $land->save();
 
-                // Credit main wallet only — sale proceeds are never rewards
+                // Credit main wallet — sale proceeds are never rewards
                 $user->increment('balance_kobo', $totalReceived);
                 $balanceAfter = $user->fresh()->balance_kobo;
 
                 LedgerEntry::create([
                     'uid'           => $user->id,
-                    'type'          => 'deposit',
+                    'type'          => 'sale',
                     'amount_kobo'   => $totalReceived,
                     'balance_after' => $balanceAfter,
                     'reference'     => $reference,
@@ -251,11 +259,11 @@ class PurchaseController extends Controller
                 event(new LandUnitsSold($user->id, $land->id, $request->units, $pricePerUnit, $totalReceived));
 
                 return response()->json([
-                    'message'              => 'Units sold successfully.',
-                    'reference'            => $reference,
-                    'amount_received_kobo' => $totalReceived,
+                    'message'               => 'Units sold successfully.',
+                    'reference'             => $reference,
+                    'amount_received_kobo'  => $totalReceived,
                     'amount_received_naira' => $totalReceived / 100,
-                    'available_units'      => $land->available_units,
+                    'available_units'       => $land->available_units,
                 ]);
             });
 
@@ -267,6 +275,10 @@ class PurchaseController extends Controller
         }
     }
 
+    /**
+     * Complete a referral when the referred user makes their first purchase.
+     * Single source of truth — ReferralController::completeReferral() delegates here.
+     */
     private function completeReferral($referredUser): void
     {
         $referral = Referral::where('referred_user_id', $referredUser->id)
@@ -277,28 +289,32 @@ class PurchaseController extends Controller
 
         try {
             DB::transaction(function () use ($referral) {
-                $referral->update(['status' => 'completed', 'completed_at' => now()]);
+                // Use markCompleted() so any future observers fire correctly
+                $referral->markCompleted();
 
-                // Referrer gets cashback to rewards wallet (claimed via claimReward)
+                // Referrer gets cashback to rewards wallet
                 ReferralReward::create([
                     'referral_id' => $referral->id,
                     'user_id'     => $referral->referrer_id,
                     'reward_type' => 'cashback',
-                    'amount_kobo' => 5000,
+                    'amount_kobo' => (int) config('rewards.referral_cashback_kobo', 5000),
                     'claimed'     => false,
                 ]);
 
-                // Referred user gets one-time discount (auto-applied next purchase)
+                // Referred user gets one-time discount on next purchase
                 ReferralReward::create([
                     'referral_id'         => $referral->id,
                     'user_id'             => $referral->referred_user_id,
                     'reward_type'         => 'discount',
-                    'discount_percentage' => 10,
+                    'discount_percentage' => (int) config('rewards.referral_discount_percent', 10),
                     'claimed'             => false,
                 ]);
             });
         } catch (\Exception $e) {
-            Log::error('Failed to complete referral', ['referral_id' => $referral->id, 'error' => $e->getMessage()]);
+            Log::error('Failed to complete referral', [
+                'referral_id' => $referral->id,
+                'error'       => $e->getMessage(),
+            ]);
         }
     }
 }

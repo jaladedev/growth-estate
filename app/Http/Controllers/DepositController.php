@@ -20,7 +20,8 @@ class DepositController extends Controller
             'gateway' => 'required|in:paystack,monnify',
         ]);
 
-        $deposit = DepositService::createDeposit(
+        // amount is already in kobo — pass directly to service
+        $deposit = DepositService::createDepositKobo(
             $user,
             $request->amount,
             $request->gateway
@@ -51,9 +52,7 @@ class DepositController extends Controller
         }
 
         if (! $paymentUrl) {
-            return response()->json([
-                'error' => 'Payment initialization failed',
-            ], 500);
+            return response()->json(['error' => 'Payment initialization failed.'], 500);
         }
 
         return response()->json([
