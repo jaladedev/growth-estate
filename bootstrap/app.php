@@ -14,13 +14,24 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->api(prepend: [
             \Illuminate\Http\Middleware\HandleCors::class,
-            \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
         ]);
 
         $middleware->alias([
+            // Auth
+            'auth'               => \App\Http\Middleware\Authenticate::class,
+            'jwt.auth'           => \App\Http\Middleware\JwtMiddleware::class,
+            'jwt.refresh'        => \Tymon\JWTAuth\Http\Middleware\RefreshToken::class,
+
+            // Authorization
+            'admin'              => \App\Http\Middleware\AdminMiddleware::class,
             'verified'           => \App\Http\Middleware\EnsureEmailIsVerified::class,
+            'suspended'          => \App\Http\Middleware\EnsureUserIsNotSuspended::class,
+
+            // Transaction PIN
+            'check.pin'          => \App\Http\Middleware\CheckTransactionPin::class,
+
+            // Rate limiting
             'throttle.sensitive' => \App\Http\Middleware\ThrottleSensitiveRequests::class,
-            'suspended' => \App\Http\Middleware\EnsureUserIsNotSuspended::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

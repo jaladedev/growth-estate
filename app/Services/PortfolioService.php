@@ -57,13 +57,13 @@ class PortfolioService
             $land = DB::table('lands')->find($userLand->land_id);
 
             $landBreakdown[] = [
-                'land_id'              => $userLand->land_id,
-                'land_name'            => $land->title ?? 'Unknown',
-                'units'                => $userLand->units,
-                'price_per_unit_kobo'  => $pricePerUnit,
-                'price_per_unit_naira' => $pricePerUnit / 100,
-                'total_value_kobo'     => $landValue,
-                'total_value_naira'    => $landValue / 100,
+                'land_id'                    => $userLand->land_id,
+                'land_name'                  => $land->title ?? 'Unknown',
+                'units'                      => $userLand->units,
+                'price_per_unit_kobo'        => $pricePerUnit,
+                'price_per_unit_naira'       => $pricePerUnit / 100,
+                'total_portfolio_value_kobo' => $landValue,
+                'total_portfolio_value_naira'=> $landValue / 100,
             ];
         }
 

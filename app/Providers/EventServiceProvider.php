@@ -11,6 +11,8 @@ use App\Events\LandPriceChanged;
 use App\Listeners\ClearLandCache;
 use App\Listeners\SendPurchaseNotification;
 use App\Listeners\SendSaleNotification;
+use App\Listeners\UpdatePortfolioOnPurchase;
+use App\Listeners\UpdatePortfolioOnPriceChange;
 
 class EventServiceProvider extends ServiceProvider
 {
@@ -19,6 +21,7 @@ class EventServiceProvider extends ServiceProvider
         LandUnitsPurchased::class => [
             ClearLandCache::class,
             SendPurchaseNotification::class,
+            UpdatePortfolioOnPurchase::class,
         ],
 
         LandUnitsSold::class => [
@@ -28,6 +31,7 @@ class EventServiceProvider extends ServiceProvider
 
         LandPriceChanged::class => [
             ClearLandCache::class,
+            UpdatePortfolioOnPriceChange::class,
         ],
     ];
 }

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AdminUserController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DepositController;
 use App\Http\Controllers\KycController;
@@ -33,7 +34,6 @@ Route::post('/email/verify/code',         [AuthController::class, 'verifyEmailCo
 Route::post('/email/resend-verification', [AuthController::class, 'resendVerificationEmail'])
     ->middleware('throttle.sensitive');
 
-
 Route::prefix('password')->group(function () {
     Route::post('/reset/code',   [AuthController::class, 'sendPasswordResetCode'])->middleware('throttle.sensitive');
     Route::post('/reset/verify', [AuthController::class, 'verifyResetCode'])->middleware('throttle.sensitive');
@@ -63,7 +63,7 @@ Route::post('/monnify/webhook', [MonnifyWebhookController::class, 'handle'])
 
 /*
 |--------------------------------------------------------------------------
-| Protected Routes — JWT required + suspension check 
+| Protected Routes — JWT required + suspension check
 |--------------------------------------------------------------------------
 */
 Route::middleware(['jwt.auth', EnsureUserIsNotSuspended::class])->group(function () {
