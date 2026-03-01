@@ -42,16 +42,16 @@ class PortfolioController extends Controller
         $snapshots = PortfolioDailySnapshot::where('user_id', $user->id)
             ->where('snapshot_date', '>=', now()->subDays($days)->toDateString())
             ->orderBy('snapshot_date')
-            ->select('snapshot_date', 'total_value_kobo', 'total_invested_kobo')
+            ->select('snapshot_date', 'total_portfolio_value_kobo', 'total_invested_kobo')
             ->get()
             ->map(fn ($s) => [
                 'date'               => $s->snapshot_date,
-                'value_kobo'         => $s->total_value_kobo,
-                'value_naira'        => $s->total_value_kobo / 100,
+                'value_kobo'         => $s->total_portfolio_value_kobo,
+                'value_naira'        => $s->total_portfolio_value_kobo / 100,
                 'invested_kobo'      => $s->total_invested_kobo,
                 'invested_naira'     => $s->total_invested_kobo / 100,
-                'profit_loss_kobo'   => $s->total_value_kobo - $s->total_invested_kobo,
-                'profit_loss_naira'  => ($s->total_value_kobo - $s->total_invested_kobo) / 100,
+                'profit_loss_kobo'   => $s->total_portfolio_value_kobo - $s->total_invested_kobo,
+                'profit_loss_naira'  => ($s->total_portfolio_value_kobo - $s->total_invested_kobo) / 100,
             ]);
 
         return response()->json([
@@ -108,7 +108,7 @@ class PortfolioController extends Controller
 
         $lands = collect($summary['lands'])->map(function ($land) use ($totalValue) {
             $land['allocation_percent'] = $totalValue > 0
-                ? round(($land['total_value_kobo'] / $totalValue) * 100, 2)
+                ? round(($land['total_portfolio_value_kobo'] / $totalValue) * 100, 2)
                 : 0;
             return $land;
         });
@@ -116,7 +116,7 @@ class PortfolioController extends Controller
         return response()->json([
             'success' => true,
             'data'    => [
-                'total_value_kobo'  => $totalValue,
+                'total_portfolio_value_kobo'  => $totalValue,
                 'total_value_naira' => $totalValue / 100,
                 'lands'             => $lands,
             ],

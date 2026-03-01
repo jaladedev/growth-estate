@@ -11,7 +11,15 @@ class LedgerEntry extends Model
         'type',
         'amount_kobo',
         'balance_after',
+        'rewards_balance_after',
         'reference',
+        'note',
+    ];
+
+    protected $casts = [
+        'amount_kobo'           => 'integer',
+        'balance_after'         => 'integer',
+        'rewards_balance_after' => 'integer',
     ];
 
     public function user()

@@ -12,6 +12,10 @@ return new class extends Migration
             if (! Schema::hasColumn('ledger_entries', 'rewards_balance_after')) {
                 $table->bigInteger('rewards_balance_after')->nullable()->after('balance_after');
             }
+
+            if (! Schema::hasColumn('ledger_entries', 'note')) {
+                $table->string('note')->nullable()->after('rewards_balance_after');
+            }
         });
     }
 
@@ -20,6 +24,10 @@ return new class extends Migration
         Schema::table('ledger_entries', function (Blueprint $table) {
             if (Schema::hasColumn('ledger_entries', 'rewards_balance_after')) {
                 $table->dropColumn('rewards_balance_after');
+            }
+
+            if (Schema::hasColumn('ledger_entries', 'note')) {
+                $table->dropColumn('note');
             }
         });
     }

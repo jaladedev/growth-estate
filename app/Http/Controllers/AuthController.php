@@ -49,7 +49,7 @@ class AuthController extends Controller
                     'name'                   => $user->name,
                     'email'                  => $user->email,
                     'email_verified_at'      => $user->email_verified_at,
-                    'transaction_pin'        => (bool) $user->transaction_pin, 
+                    'transaction_pin'        => (bool) $user->transaction_pin,
                     'is_admin'               => $user->is_admin,
                     'created_at'             => $user->created_at,
                     'updated_at'             => $user->updated_at,
@@ -57,9 +57,9 @@ class AuthController extends Controller
                     // ── Balances ──────────────────────────────────────────
                     'balance_kobo'           => $user->balance_kobo,
                     'balance_naira'          => $user->balance_kobo / 100,
-                    'rewards_balance_kobo'   => $user->rewards_balance_kobo,   
-                    'rewards_balance_naira'  => $user->rewards_balance_kobo / 100, 
-                    'total_spendable_kobo'   => $user->total_spendable_kobo,   
+                    'rewards_balance_kobo'   => $user->rewards_balance_kobo,
+                    'rewards_balance_naira'  => $user->rewards_balance_kobo / 100,
+                    'total_spendable_kobo'   => $user->total_spendable_kobo,
                     'total_spendable_naira'  => $user->total_spendable_kobo / 100,
 
                     // ── Bank ─────────────────────────────────────────────
@@ -77,7 +77,7 @@ class AuthController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
-            \Log::error('Error fetching user profile', ['error' => $e->getMessage()]);
+            Log::error('Error fetching user profile', ['error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
@@ -127,7 +127,7 @@ class AuthController extends Controller
             }
 
             $verificationCode               = random_int(100000, 999999);
-            $user->verification_code        = $verificationCode;
+            $user->verification_code        = Hash::make((string) $verificationCode);
             $user->verification_code_expiry = now()->addMinutes(30);
             $user->save();
 
@@ -321,9 +321,10 @@ class AuthController extends Controller
         }
 
         if (
-            $user->verification_code !== $request->verification_code ||
+            ! $user->verification_code ||
             ! $user->verification_code_expiry ||
-            now()->isAfter($user->verification_code_expiry)
+            now()->isAfter($user->verification_code_expiry) ||
+            ! Hash::check((string) $request->verification_code, $user->verification_code)
         ) {
             return $this->sendErrorResponse('Invalid or expired verification code.', 400);
         }
@@ -351,7 +352,7 @@ class AuthController extends Controller
         }
 
         $verificationCode               = random_int(100000, 999999);
-        $user->verification_code        = $verificationCode;
+        $user->verification_code        = Hash::make((string) $verificationCode);
         $user->verification_code_expiry = now()->addMinutes(30);
         $user->save();
 
