@@ -11,6 +11,13 @@ use Illuminate\Support\Facades\Log;
 
 class ReferralController extends Controller
 {
+    private string $frontendUrl;
+
+    public function __construct()
+    {
+        $this->frontendUrl = config('app.frontend_url');
+    }
+
     public function dashboard(Request $request)
     {
         $user = $request->user();
@@ -29,7 +36,7 @@ class ReferralController extends Controller
             'success' => true,
             'data'    => [
                 'referral_code'          => $user->referral_code,
-                'referral_link'          => url("/register?ref={$user->referral_code}"),
+                'referral_link'          => "{$this->frontendUrl}/register?ref={$user->referral_code}",
                 'total_referrals'        => $referrals->count(),
                 'completed_referrals'    => $referrals->where('status', 'completed')->count(),
                 'pending_referrals'      => $referrals->where('status', 'pending')->count(),
