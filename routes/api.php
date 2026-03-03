@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AdminUserController;
+use App\Http\Controllers\AdminSupportController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DepositController;
 use App\Http\Controllers\KycController;
@@ -9,220 +10,175 @@ use App\Http\Controllers\LandController;
 use App\Http\Controllers\MonnifyWebhookController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PaystackWebhookController;
+use App\Http\Controllers\PinController;
 use App\Http\Controllers\PortfolioController;
+use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PurchaseController;
 use App\Http\Controllers\ReferralController;
 use App\Http\Controllers\SupportController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\WithdrawalController;
-use App\Http\Middleware\AdminMiddleware;
-use App\Http\Middleware\CheckTransactionPin;
-use App\Http\Middleware\EnsureUserIsNotSuspended;
 use Illuminate\Support\Facades\Route;
 
-/*
-|--------------------------------------------------------------------------
-| Public / Unauthenticated Routes
-|--------------------------------------------------------------------------
-*/
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUBLIC (no auth)
+// ─────────────────────────────────────────────────────────────────────────────
 
 Route::post('/register', [AuthController::class, 'register']);
-Route::post('/login',    [AuthController::class, 'login'])->middleware('throttle.sensitive');
+Route::post('/login',    [AuthController::class, 'login']);
 
-Route::post('/email/verify/code',         [AuthController::class, 'verifyEmailCode'])
-    ->middleware('throttle.sensitive');
-Route::post('/email/resend-verification', [AuthController::class, 'resendVerificationEmail'])
-    ->middleware('throttle.sensitive');
+Route::post('/email/verify/code',         [AuthController::class, 'verifyEmailCode']);
+Route::post('/email/resend-verification', [AuthController::class, 'resendVerification']);
 
-Route::prefix('password')->group(function () {
-    Route::post('/reset/code',   [AuthController::class, 'sendPasswordResetCode'])->middleware('throttle.sensitive');
-    Route::post('/reset/verify', [AuthController::class, 'verifyResetCode'])->middleware('throttle.sensitive');
-    Route::post('/reset',        [AuthController::class, 'resetPassword'])->middleware('throttle.sensitive');
-});
+Route::post('/password/reset/code',   [AuthController::class, 'sendPasswordResetCode']);
+Route::post('/password/reset/verify', [AuthController::class, 'verifyPasswordResetCode']);
+Route::post('/password/reset',        [AuthController::class, 'resetPassword']);
 
-// Public referral code validation
 Route::post('/referrals/validate', [ReferralController::class, 'validateCode']);
 
-// Public land listing
-Route::get('/land', [LandController::class, 'index']);
+Route::get('/land', [LandController::class, 'index']); // public land listing
 
-// FAQs
-Route::get('/support/faqs', [SupportController::class, 'faqs']);
-
+Route::get('/support/faqs',          [SupportController::class, 'faqs']);
 Route::post('/support/tickets/guest', [SupportController::class, 'storeGuestTicket']);
 
-/*
-|--------------------------------------------------------------------------
-| Webhooks — signature-verified internally, bypasses auth + throttle
-|--------------------------------------------------------------------------
-*/
-Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle'])
-    ->withoutMiddleware(['auth:api', 'throttle']);
-Route::post('/monnify/webhook', [MonnifyWebhookController::class, 'handle'])
-    ->withoutMiddleware(['auth:api', 'throttle']);
+// ─────────────────────────────────────────────────────────────────────────────
+// PAYMENT WEBHOOKS (no auth — verified by HMAC signature inside controller)
+// ─────────────────────────────────────────────────────────────────────────────
 
-/*
-|--------------------------------------------------------------------------
-| Protected Routes — JWT required + suspension check
-|--------------------------------------------------------------------------
-*/
+Route::post('/paystack/webhook', [DepositController::class,    'handlePaystackWebhook']);
+Route::post('/monnify/webhook',  [WithdrawalController::class, 'handleMonnifyWebhook']);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTHENTICATED (JWT required, account must not be suspended)
+// ─────────────────────────────────────────────────────────────────────────────
+
 Route::middleware(['jwt.auth', 'suspended'])->group(function () {
 
-    Route::get('/me',       [AuthController::class, 'me']);
-    Route::post('/refresh', [AuthController::class, 'refresh']);
+    // Auth lifecycle
+    Route::get('/me',         [AuthController::class, 'me']);
+    Route::post('/refresh',   [AuthController::class, 'refresh']);
+    Route::post('/logout',    [AuthController::class, 'logout']);
 
-    Route::get('/deposit/verify/{reference}', [DepositController::class, 'verifyDeposit']);
+    // Deposit verification (no email-verified requirement)
+    Route::get('/deposit/verify/{reference}', [DepositController::class, 'verify']);
 
-    /*
-    |--------------------------------------------------------------------------
-    | Verified email required
-    |--------------------------------------------------------------------------
-    */
+    // ─────────────────────────────────────────────────────────────────────
+    // EMAIL VERIFIED
+    // ─────────────────────────────────────────────────────────────────────
     Route::middleware('verified')->group(function () {
 
-        Route::post('/logout',               [AuthController::class, 'logout']);
+        // Profile & account
+        Route::get('/me',              [ProfileController::class, 'me']);
+        Route::put('/user/bank-details', [ProfileController::class, 'updateBankDetails']);
+        Route::get('/user/stats',      [ProfileController::class, 'stats']);
+        Route::get('/user/lands',      [ProfileController::class, 'lands']);
         Route::post('/user/change-password', [AuthController::class, 'changePassword']);
 
-        Route::prefix('support')->group(function () {
-            Route::post('/chat',                   [SupportController::class, 'chat']);
-            Route::get('/tickets',                 [SupportController::class, 'indexTickets']);
-            Route::post('/tickets',                [SupportController::class, 'storeTicket']);
-            Route::get('/tickets/{ticket}',        [SupportController::class, 'showTicket']);
-            Route::post('/tickets/{ticket}/reply', [SupportController::class, 'replyTicket']);
-        });
+        // Transaction PIN  (rate-limited for forgot/verify via throttle.sensitive)
+        Route::post('/pin/set',         [PinController::class, 'set']);
+        Route::post('/pin/update',      [PinController::class, 'update']);
+        Route::post('/pin/forgot',      [PinController::class, 'forgot'])->middleware('throttle.sensitive');
+        Route::post('/pin/verify-code', [PinController::class, 'verifyCode'])->middleware('throttle.sensitive');
+        Route::post('/pin/reset',       [PinController::class, 'reset'])->middleware('throttle.sensitive');
 
-        /*
-        | KYC
-        */
-        Route::prefix('kyc')->group(function () {
-            Route::get('/status',  [KycController::class, 'status']);
-            Route::post('/submit', [KycController::class, 'submit']);
-            Route::get('/{id}/image/{imageType}', [KycImageController::class, 'show'])
-                ->name('kyc.image')
-                ->where('imageType', 'id_front|id_back|selfie');
-        });
+        // Transactions
+        Route::get('/transactions/user', [TransactionController::class, 'userTransactions']);
 
-        /*
-        | Referrals
-        */
-        Route::prefix('referrals')->group(function () {
-            Route::get('/dashboard',                 [ReferralController::class, 'dashboard']);
-            Route::get('/rewards',                   [ReferralController::class, 'availableRewards']);
-            Route::post('/rewards/{rewardId}/claim', [ReferralController::class, 'claimReward']);
-        });
+        // Lands (authenticated view)
+        Route::get('/lands',             [LandController::class, 'indexAuth']);
+        Route::get('/lands/map',         [LandController::class, 'mapIndex']);
+        Route::get('/lands/{land}',      [LandController::class, 'show']);
+        Route::get('/lands/{land}/units',[LandController::class, 'units']);
 
-        /*
-        | Lands
-        */
-        Route::prefix('lands')->group(function () {
-            Route::get('/map',      [LandController::class, 'mapIndex']);
-            Route::get('/',         [LandController::class, 'index']);
-            Route::get('/{id}',     [LandController::class, 'show']);
-            Route::get('/{id}/units', [UserController::class, 'getUserUnitsForLand']);
+        // Purchases & sales  (transaction PIN middleware applied per-route)
+        Route::post('/lands/{land}/purchase', [PurchaseController::class, 'purchase'])->middleware('check.pin');
+        Route::post('/lands/{land}/sell',     [PurchaseController::class, 'sellUnits'])->middleware('check.pin');
 
-            Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])
-                ->middleware(CheckTransactionPin::class);
-            Route::post('/{id}/sell', [PurchaseController::class, 'sellUnits'])
-                ->middleware(CheckTransactionPin::class);
-        });
-
-        /*
-        | User
-        */
-        Route::prefix('user')->group(function () {
-            Route::get('/lands',        [UserController::class, 'getAllUserLands']);
-            Route::get('/stats',        [UserController::class, 'getUserStats']);
-            Route::put('/bank-details', [UserController::class, 'updateBankDetails']);
-        });
-
-        Route::get('/transactions/user', [UserController::class, 'getUserTransactions']);
-
-        /*
-        | Portfolio
-        */
+        // Portfolio
         Route::prefix('portfolio')->group(function () {
-            Route::get('/summary',      [PortfolioController::class, 'summary']);
-            Route::get('/chart',        [PortfolioController::class, 'chart']);
-            Route::get('/performance',  [PortfolioController::class, 'performance']);
-            Route::get('/allocation',   [PortfolioController::class, 'allocation']);
-            Route::get('/asset/{land}', [PortfolioController::class, 'asset']);
+            Route::get('/summary',        [PortfolioController::class, 'summary']);
+            Route::get('/chart',          [PortfolioController::class, 'chart']);
+            Route::get('/performance',    [PortfolioController::class, 'performance']);
+            Route::get('/allocation',     [PortfolioController::class, 'allocation']);
+            Route::get('/asset/{land}',   [PortfolioController::class, 'asset']);
         });
 
-        /*
-        | Transaction PIN — sensitive endpoints rate limited
-        */
-        Route::prefix('pin')->group(function () {
-            Route::post('/set',    [UserController::class, 'setTransactionPin']);
-            Route::post('/update', [UserController::class, 'updateTransactionPin']);
+        // Deposits
+        Route::post('/deposit',           [DepositController::class, 'initiate']);
+        Route::get('/paystack/banks',     [DepositController::class, 'banks']);
+        Route::post('/paystack/resolve-account', [DepositController::class, 'resolveAccount']);
 
-            Route::post('/forgot',      [UserController::class, 'sendPinResetCode'])->middleware('throttle.sensitive');
-            Route::post('/verify-code', [UserController::class, 'verifyPinResetCode'])->middleware('throttle.sensitive');
-            Route::post('/reset',       [UserController::class, 'resetTransactionPin'])->middleware('throttle.sensitive');
-        });
+        // Withdrawals  (transaction PIN required)
+        Route::post('/withdraw',                      [WithdrawalController::class, 'requestWithdrawal'])->middleware('check.pin');
+        Route::get('/withdrawals/{reference}',        [WithdrawalController::class, 'show']);
 
-        /*
-        | Deposits & Withdrawals
-        */
-        Route::post('/deposit', [DepositController::class, 'initiateDeposit']);
+        // KYC
+        Route::get('/kyc/status',                     [KycController::class, 'status']);
+        Route::post('/kyc/submit',                    [KycController::class, 'submit']);
+        Route::get('/kyc/{id}/image/{imageType}',     [KycImageController::class, 'show'])->middleware('throttle:30,1');
 
-        Route::post('/withdraw', [WithdrawalController::class, 'requestWithdrawal'])
-            ->middleware(CheckTransactionPin::class);
-        Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
-
-        /*
-        | Bank Helpers
-        */
-        Route::get('/paystack/banks',            [UserController::class, 'getBanks']);
-        Route::post('/paystack/resolve-account', [UserController::class, 'resolveAccount']);
-
-        /*
-        | Notifications
-        */
-        Route::prefix('notifications')->group(function () {
-            Route::get('/',           [NotificationController::class, 'getNotifications']);
-            Route::get('/unread',     [NotificationController::class, 'getUnreadNotifications']);
-            Route::post('/read',      [NotificationController::class, 'markAllAsRead']);
-            Route::post('/{id}/read', [NotificationController::class, 'markAsRead']);
-        });
-
-    }); // end verified
-
-    /*
-    |--------------------------------------------------------------------------
-    | Admin Routes
-    |--------------------------------------------------------------------------
-    */
-    Route::middleware(['verified', AdminMiddleware::class])->prefix('admin')->group(function () {
-
-        Route::prefix('lands')->group(function () {
-            Route::get('/',               [LandController::class, 'adminIndex']);
-            Route::post('/',              [LandController::class, 'store']);
-            Route::post('/{id}',          [LandController::class, 'update']);
-            Route::patch('/{id}/disable', [LandController::class, 'disable']);
-            Route::patch('/{id}/enable',  [LandController::class, 'enable']);
-            Route::patch('/{land}/price', [LandController::class, 'updatePrice']);
-        });
-
-        Route::prefix('kyc')->group(function () {
-            Route::get('/',               [KycController::class, 'adminIndex']);
-            Route::get('/{id}',           [KycController::class, 'adminShow']);
-            Route::post('/{id}/approve',  [KycController::class, 'approve']);
-            Route::post('/{id}/reject',   [KycController::class, 'reject']);
-            Route::post('/{id}/resubmit', [KycController::class, 'requestResubmit']);
-            Route::get('/{id}/image/{imageType}', [KycImageController::class, 'show'])
-                ->where('imageType', 'id_front|id_back|selfie');
-        });
-
+        // Referrals
         Route::prefix('referrals')->group(function () {
-            Route::get('/',      [ReferralController::class, 'adminIndex']);
-            Route::get('/stats', [ReferralController::class, 'adminStats']);
+            Route::get('/dashboard',              [ReferralController::class, 'dashboard']);
+            Route::get('/rewards',                [ReferralController::class, 'rewards']);
+            Route::post('/rewards/{id}/claim',    [ReferralController::class, 'claimReward']);
         });
 
-        Route::post('/withdrawals/retry', [WithdrawalController::class, 'retryPendingWithdrawals']);
+        // Support (authenticated)
+        Route::post('/support/chat',                          [SupportController::class, 'chat'])->middleware('throttle:20,10');
+        Route::get('/support/tickets',                        [SupportController::class, 'indexTickets']);
+        Route::post('/support/tickets',                       [SupportController::class, 'storeTicket']);
+        Route::get('/support/tickets/{ticket}',               [SupportController::class, 'showTicket']);
+        Route::post('/support/tickets/{ticket}/reply',        [SupportController::class, 'replyTicket']);
 
-        Route::prefix('users')->group(function () {
-            Route::patch('/{user}/suspend',   [AdminUserController::class, 'suspend']);
-            Route::patch('/{user}/unsuspend', [AdminUserController::class, 'unsuspend']);
+        // Notifications
+        Route::prefix('notifications')->group(function () {
+            Route::get('/',              [NotificationController::class, 'index']);
+            Route::get('/unread',        [NotificationController::class, 'unread']);
+            Route::post('/read',         [NotificationController::class, 'markAllRead']);
+            Route::post('/{id}/read',    [NotificationController::class, 'markRead']);
+        });
+
+        // ─────────────────────────────────────────────────────────────────
+        // ADMIN
+        // ─────────────────────────────────────────────────────────────────
+        Route::middleware('admin')->prefix('admin')->group(function () {
+
+            // Lands
+            Route::get('/lands',                           [LandController::class, 'adminIndex']);
+            Route::post('/lands',                          [LandController::class, 'store']);
+            Route::post('/lands/{land}',                   [LandController::class, 'update']);
+            Route::patch('/lands/{land}/price',            [LandController::class, 'updatePrice']);
+            Route::patch('/lands/{land}/availability',     [LandController::class, 'toggleAvailability']);
+
+            // KYC
+            Route::get('/kyc',                             [KycController::class, 'adminIndex']);
+            Route::get('/kyc/{id}',                        [KycController::class, 'adminShow']);
+            Route::post('/kyc/{id}/approve',               [KycController::class, 'adminApprove']);
+            Route::post('/kyc/{id}/reject',                [KycController::class, 'adminReject']);
+            Route::post('/kyc/{id}/resubmit',              [KycController::class, 'adminRequestResubmit']);
+
+            // Referrals
+            Route::get('/referrals',                       [ReferralController::class, 'adminIndex']);
+            Route::get('/referrals/stats',                 [ReferralController::class, 'adminStats']);
+
+            // Withdrawals
+            Route::post('/withdrawals/retry',              [WithdrawalController::class, 'retryPendingWithdrawals']);
+
+            // Users
+            Route::patch('/users/{user}/suspend',          [AdminUserController::class, 'suspend']);
+            Route::patch('/users/{user}/unsuspend',        [AdminUserController::class, 'unsuspend']);
+
+            // Support tickets
+            Route::prefix('support/tickets')->group(function () {
+                Route::get('/',                           [AdminSupportController::class, 'index']);
+                Route::get('/{ticket}',                   [AdminSupportController::class, 'show']);
+                Route::post('/{ticket}/reply',            [AdminSupportController::class, 'reply']);
+                Route::patch('/{ticket}/status',          [AdminSupportController::class, 'updateStatus']);
+                Route::delete('/{ticket}',                [AdminSupportController::class, 'destroy']);
+            });
         });
     });
 });

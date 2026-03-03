@@ -5,6 +5,7 @@ namespace App\Providers;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\ServiceProvider;
+use App\Services\GeoService;
 use App\Models\LandPriceHistory;
 use App\Models\User;
 use App\Observers\LandPriceHistoryObserver;
@@ -14,7 +15,7 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+         $this->app->singleton(GeoService::class);
     }
 
     public function boot(): void

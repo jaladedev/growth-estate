@@ -4,11 +4,24 @@ namespace App\Listeners;
 
 use App\Events\LandUnitsPurchased;
 use App\Models\LandPriceHistory;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-class UpdatePortfolioOnPurchase
+class UpdatePortfolioOnPurchase implements ShouldQueue
 {
+    use InteractsWithQueue;
+
+    /** Retry up to 3 times before marking as failed. */
+    public int $tries = 3;
+
+    /** Exponential back-off: retry after 10s, 60s, 300s. */
+    public function backoff(): array
+    {
+        return [10, 60, 300];
+    }
+
     public function handle(LandUnitsPurchased $event): void
     {
         try {
@@ -21,7 +34,6 @@ class UpdatePortfolioOnPurchase
             DB::transaction(function () use ($event, $date, $landValue) {
 
                 // ── PER-LAND SNAPSHOT (UPSERT) ────────────────────────────────
-      
                 DB::statement("
                     INSERT INTO portfolio_land_snapshots
                         (user_id, land_id, snapshot_date, units_owned, invested_kobo,
@@ -92,7 +104,7 @@ class UpdatePortfolioOnPurchase
                 'user_id' => $event->userId ?? null,
                 'land_id' => $event->landId ?? null,
             ]);
-            throw $e;
+            throw $e; // Re-throw so the queue marks it for retry
         }
     }
 }

@@ -123,31 +123,39 @@ class PurchaseController extends Controller
 
                 $isFirstPurchase = ! Purchase::where('user_id', $user->id)->exists();
 
-                // ── Purchase record (upsert) ──────────────────────────────────
-                $actualAmountPaid = $rewardsUsed + $mainUsed; 
+                $actualAmountPaid = $rewardsUsed + $mainUsed;
 
-                $purchase = Purchase::lockForUpdate()->firstOrCreate(
-                    ['user_id' => $user->id, 'land_id' => $land->id],
-                    [
-                        'units'                      => 0,
-                        'units_sold'                 => 0,
-                        'total_amount_paid_kobo'     => 0,
-                        'total_amount_received_kobo' => 0,
-                        'status'                     => 'active',
-                        'purchase_date'              => now(),
-                    ]
-                );
-                $purchase->increment('units', $request->units);
-                $purchase->increment('total_amount_paid_kobo', $actualAmountPaid);
-                $purchase->reference     = $reference;
-                $purchase->purchase_date = now();
-                $purchase->save();
+                DB::statement("
+                    INSERT INTO purchases
+                        (user_id, land_id, units, units_sold,
+                         total_amount_paid_kobo, total_amount_received_kobo,
+                         status, purchase_date, reference, created_at, updated_at)
+                    VALUES (?, ?, ?, 0, ?, 0, 'active', ?, ?, NOW(), NOW())
+                    ON CONFLICT (user_id, land_id)
+                    DO UPDATE SET
+                        units                    = purchases.units + EXCLUDED.units,
+                        total_amount_paid_kobo   = purchases.total_amount_paid_kobo + EXCLUDED.total_amount_paid_kobo,
+                        reference                = EXCLUDED.reference,
+                        purchase_date            = EXCLUDED.purchase_date,
+                        updated_at               = NOW()
+                ", [
+                    $user->id,
+                    $land->id,
+                    $request->units,
+                    $actualAmountPaid,
+                    now(),
+                    $reference,
+                ]);
 
                 // ── Portfolio ─────────────────────────────────────────────────
-                UserLand::firstOrCreate(
-                    ['user_id' => $user->id, 'land_id' => $land->id],
-                    ['units' => 0]
-                )->increment('units', $request->units);
+                DB::statement("
+                    INSERT INTO user_land (user_id, land_id, units, created_at, updated_at)
+                    VALUES (?, ?, ?, NOW(), NOW())
+                    ON CONFLICT (user_id, land_id)
+                    DO UPDATE SET
+                        units      = user_land.units + EXCLUDED.units,
+                        updated_at = NOW()
+                ", [$user->id, $land->id, $request->units]);
 
                 // ── Transaction log ───────────────────────────────────────────
                 Transaction::create([
@@ -155,7 +163,7 @@ class PurchaseController extends Controller
                     'land_id'          => $land->id,
                     'type'             => 'purchase',
                     'units'            => $request->units,
-                    'amount_kobo'      => $totalCost,   
+                    'amount_kobo'      => $totalCost,
                     'status'           => 'completed',
                     'reference'        => $reference,
                     'transaction_date' => now(),
@@ -277,7 +285,6 @@ class PurchaseController extends Controller
 
     /**
      * Complete a referral when the referred user makes their first purchase.
-     * Single source of truth — ReferralController::completeReferral() delegates here.
      */
     private function completeReferral($referredUser): void
     {
@@ -289,10 +296,8 @@ class PurchaseController extends Controller
 
         try {
             DB::transaction(function () use ($referral) {
-                // Use markCompleted() so any future observers fire correctly
                 $referral->markCompleted();
 
-                // Referrer gets cashback to rewards wallet
                 ReferralReward::create([
                     'referral_id' => $referral->id,
                     'user_id'     => $referral->referrer_id,
@@ -301,7 +306,6 @@ class PurchaseController extends Controller
                     'claimed'     => false,
                 ]);
 
-                // Referred user gets one-time discount on next purchase
                 ReferralReward::create([
                     'referral_id'         => $referral->id,
                     'user_id'             => $referral->referred_user_id,

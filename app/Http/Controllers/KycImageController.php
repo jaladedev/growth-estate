@@ -9,20 +9,11 @@ use Illuminate\Support\Facades\Storage;
 
 class KycImageController extends Controller
 {
-    // Allowed image types mapped to their storage subdirectory
-    private const IMAGE_TYPES = [
-        'id_front'   => 'ids',
-        'id_back'    => 'ids',
-        'selfie'     => 'selfies',
-    ];
+    private const ALLOWED_TYPES = ['id_front', 'id_back', 'selfie'];
 
     /**
      * Stream a KYC image to the authenticated user who owns it (or an admin).
-     *
-     * Route: GET /api/kyc/{id}/image/{imageType}
-     *
-     * Rate limit: 30 requests per minute per user to prevent bulk enumeration
-     * if a JWT is ever compromised.
+     * Rate limit: 30 requests per minute per user to prevent bulk enumeration.
      */
     public function show(Request $request, int $id, string $imageType)
     {
@@ -38,10 +29,10 @@ class KycImageController extends Controller
             ], 429);
         }
 
-        RateLimiter::hit($rateLimitKey, 60); // 1-minute window
+        RateLimiter::hit($rateLimitKey, 60);
 
         // ── Validate image type ──────────────────────────────────────────────
-        if (! array_key_exists($imageType, self::IMAGE_TYPES)) {
+        if (! in_array($imageType, self::ALLOWED_TYPES, true)) {
             return response()->json(['message' => 'Invalid image type.'], 400);
         }
 
@@ -59,22 +50,19 @@ class KycImageController extends Controller
         }
 
         // ── Resolve the file path ────────────────────────────────────────────
-        $subdir   = self::IMAGE_TYPES[$imageType];
-        $filename = $kyc->{$imageType . '_path'} ?? null;
+        $storedPath = $kyc->{$imageType . '_path'} ?? null;
 
-        if (! $filename) {
+        if (! $storedPath) {
             return response()->json(['message' => 'Image not available.'], 404);
         }
 
-        // Images are stored in the private disk (storage/app/private/kyc/...)
-        $path = "kyc/{$subdir}/{$filename}";
-
-        if (! Storage::disk('private')->exists($path)) {
+        // Images are stored on the 'local' disk (storage/app/private)
+        if (! Storage::disk('local')->exists($storedPath)) {
             return response()->json(['message' => 'Image file not found.'], 404);
         }
 
-        $mimeType = Storage::disk('private')->mimeType($path);
-        $stream   = Storage::disk('private')->readStream($path);
+        $mimeType = Storage::disk('local')->mimeType($storedPath);
+        $stream   = Storage::disk('local')->readStream($storedPath);
 
         return response()->stream(
             function () use ($stream) {
@@ -87,7 +75,6 @@ class KycImageController extends Controller
             [
                 'Content-Type'        => $mimeType,
                 'Content-Disposition' => 'inline',
-                // Prevent downstream caching of sensitive KYC images
                 'Cache-Control'       => 'no-store, no-cache, must-revalidate',
                 'Pragma'              => 'no-cache',
             ]

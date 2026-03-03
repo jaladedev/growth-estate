@@ -3,501 +3,286 @@
 namespace App\Http\Controllers;
 
 use App\Models\Land;
-use App\Models\LandImage;
 use App\Models\LandPriceHistory;
+use App\Services\GeoService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use App\Events\LandPriceChanged;
+use Illuminate\Validation\ValidationException;
 
+/**
+ * LandController
+ *
+ */
 class LandController extends Controller
 {
-    /* ================= PUBLIC ================= */
+    public function __construct(private GeoService $geo) {}
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // PUBLIC
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // GET /land  (public, cached)
     public function index(Request $request)
     {
-        $filterKey = md5(json_encode($request->only(['north','south','east','west'])));
-        $cacheKey = "lands:list:$filterKey";
+        $lands = Cache::remember('lands.public', 300, fn () =>
+            Land::with(['images', 'latestPrice'])
+                ->where('is_available', true)
+                ->orderByDesc('created_at')
+                ->get()
+        );
 
-        $landIds = Cache::tags(['lands:list'])->remember($cacheKey, now()->addMinutes(5), function () use ($request) {
-            $query = Land::where('is_available', true);
-            if ($request->filled(['north','south','east','west'])) {
-                $query->withinBounds($request->north, $request->south, $request->east, $request->west);
-            }
-            return $query->pluck('id')->toArray();
-        });
-
-        $lands = collect($landIds)->map(fn($id) => $this->getCachedLand($id));
-        return $this->success($lands);
+        return response()->json(['success' => true, 'data' => $lands]);
     }
 
+    // GET /lands  (authenticated)
+    public function indexAuth(Request $request)
+    {
+        $lands = Cache::remember('lands.auth', 300, fn () =>
+            Land::with(['images', 'latestPrice'])
+                ->orderByDesc('created_at')
+                ->get()
+        );
+
+        return response()->json(['success' => true, 'data' => $lands]);
+    }
+
+    // GET /lands/map  (authenticated, bounding-box filtered)
     public function mapIndex(Request $request)
     {
-        $filterKey = md5(json_encode($request->only(['north','south','east','west'])));
-        $cacheKey = "lands:map:$filterKey";
+        $request->validate([
+            'min_lng' => 'required|numeric|between:-180,180',
+            'min_lat' => 'required|numeric|between:-90,90',
+            'max_lng' => 'required|numeric|between:-180,180',
+            'max_lat' => 'required|numeric|between:-90,90',
+        ]);
 
-        $landIds = Cache::tags(['maps'])->remember($cacheKey, now()->addMinutes(5), function () use ($request) {
-            $query = Land::where('is_available', true)
-                ->where(function($q) {
-                    $q->whereNotNull('coordinates')
-                      ->orWhereNotNull('lat');
-                });
-            
-            if ($request->filled(['north','south','east','west'])) {
-                $query->withinBounds($request->north, $request->south, $request->east, $request->west);
-            }
-            return $query->pluck('id')->toArray();
-        });
+        try {
+            $this->geo->validateBbox($request->only('min_lng', 'min_lat', 'max_lng', 'max_lat'));
+        } catch (\InvalidArgumentException $e) {
+            throw ValidationException::withMessages(['bbox' => $e->getMessage()]);
+        }
 
-        $lands = collect($landIds)->map(fn($id) => $this->getCachedLand($id, true));
-        return $this->success($lands);
+        $bboxExpr = $this->geo->makeBboxExpression(
+            (float) $request->min_lng,
+            (float) $request->min_lat,
+            (float) $request->max_lng,
+            (float) $request->max_lat
+        );
+
+        $lands = Land::with(['images', 'latestPrice'])
+            ->whereNotNull('coordinates')
+            ->whereRaw($bboxExpr)
+            ->get(['id', 'title', 'lat', 'lng', 'available_units', 'is_available']);
+
+        return response()->json(['success' => true, 'data' => $lands]);
     }
 
-    public function show($id)
+    // GET /lands/{id}
+    public function show(Land $land)
     {
-        return $this->success($this->getCachedLand($id));
+        return response()->json([
+            'success' => true,
+            'data'    => $land->load(['images', 'latestPrice', 'priceHistory']),
+        ]);
     }
 
-    /* ================= ADMIN ================= */
-
-    public function adminIndex()
+    // GET /lands/{id}/units
+    public function units(Land $land)
     {
-        $this->authorizeAdmin();
-
-        $landIds = Cache::tags(['admin:lands'])->remember('admin:lands:index', now()->addMinutes(2), function () {
-            return Land::pluck('id')->toArray();
-        });
-
-        $lands = collect($landIds)->map(fn($id) => $this->getCachedLand($id));
-        return $this->success($lands);
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'total_units'     => $land->total_units,
+                'available_units' => $land->available_units,
+                'sold_units'      => $land->total_units - $land->available_units,
+            ],
+        ]);
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // ADMIN
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // POST /admin/lands
     public function store(Request $request)
     {
-        $this->authorizeAdmin();
-
-        $data = $request->validate([
-            'title' => 'required|string',
-            'location' => 'required|string',
-            'size' => 'required|numeric',
-            'total_units' => 'required|integer|min:1',
+        $request->validate([
+            'title'        => 'required|string|max:200',
+            'location'     => 'required|string|max:200',
+            'size'         => 'required|numeric|min:1',
+            'total_units'  => 'required|integer|min:1',
+            'description'  => 'nullable|string|max:2000',
+            'geometry'     => 'required|array',
+            'geometry.type'=> 'required|in:Point,Polygon',
             'price_per_unit_kobo' => 'required|integer|min:1',
-            'description' => 'nullable|string',
-            'lat' => 'nullable|numeric|between:-90,90',
-            'lng' => 'nullable|numeric|between:-180,180',
-            'coordinates' => 'nullable|array',
-            'coordinates.type' => 'required_with:coordinates|in:Point,Polygon',
-            'coordinates.coordinates' => 'required_with:coordinates',
-            'images' => 'nullable|array',
-            'images.*' => 'image|max:2048',
+            'images'       => 'nullable|array|max:10',
+            'images.*'     => 'image|max:5120',
         ]);
 
-        // Normalize and validate coordinates
-        if (isset($data['coordinates'])) {
-            $data['coordinates'] = $this->normalizeCoordinates($data['coordinates']);
-            $this->validateGeoJSONStructure($data['coordinates']);
-            
-            // Auto-populate lat/lng from coordinates if not provided
-            if (!isset($data['lat']) || !isset($data['lng'])) {
-                $center = $this->extractCenter($data['coordinates']);
-                $data['lat'] = $center['lat'];
-                $data['lng'] = $center['lng'];
-            }
+        try {
+            $this->geo->validateGeojson($request->geometry);
+        } catch (\InvalidArgumentException $e) {
+            throw ValidationException::withMessages(['geometry' => $e->getMessage()]);
         }
 
-        $land = null;
-        DB::transaction(function () use ($data, &$land) {
-            // Convert GeoJSON to PostGIS geometry
-            $geometryWKT = null;
-            if (isset($data['coordinates'])) {
-                $geometryWKT = $this->geoJsonToWKT($data['coordinates']);
-            }
+        $wkt       = $this->geo->toWkt($request->geometry);
+        $centerLat = null;
+        $centerLng = null;
 
+        if ($request->geometry['type'] === 'Polygon') {
+            $centroid  = $this->geo->polygonCentroid($request->geometry['coordinates']);
+            $centerLat = $centroid['lat'];
+            $centerLng = $centroid['lng'];
+        } else {
+            [$centerLng, $centerLat] = $request->geometry['coordinates'];
+        }
+
+        $land = DB::transaction(function () use ($request, $wkt, $centerLat, $centerLng) {
             $land = Land::create([
-                'title' => $data['title'],
-                'location' => $data['location'],
-                'size' => $data['size'],
-                'total_units' => $data['total_units'],
-                'available_units' => $data['total_units'],
-                'description' => $data['description'] ?? null,
-                'lat' => $data['lat'] ?? null,
-                'lng' => $data['lng'] ?? null,
-                'is_available' => true,
+                'title'           => $request->title,
+                'location'        => $request->location,
+                'size'            => $request->size,
+                'total_units'     => $request->total_units,
+                'available_units' => $request->total_units,
+                'description'     => $request->description,
+                'lat'             => $centerLat,
+                'lng'             => $centerLng,
+                'coordinates'     => DB::raw("ST_GeomFromText('{$wkt}', 4326)"),
+                'is_available'    => true,
             ]);
-
-            // Set PostGIS geometry using raw SQL
-            if ($geometryWKT) {
-                DB::statement(
-                    "UPDATE lands SET coordinates = ST_GeomFromText(?, 4326) WHERE id = ?",
-                    [$geometryWKT, $land->id]
-                );
-            }
 
             LandPriceHistory::create([
-                'land_id' => $land->id,
-                'price_per_unit_kobo' => $data['price_per_unit_kobo'],
-                'price_date' => now()->toDateString(),
+                'land_id'             => $land->id,
+                'price_per_unit_kobo' => $request->price_per_unit_kobo,
+                'price_date'          => today(),
             ]);
+
+            if ($request->hasFile('images')) {
+                foreach ($request->file('images') as $image) {
+                    $path = $image->store('lands', 'public');
+                    $land->images()->create(['image_path' => $path]);
+                }
+            }
+
+            return $land;
         });
 
-        $this->handleImages($request, $land);
-        $this->refreshLandCache($land);
-        Cache::tags(['lands:list', 'maps', 'admin:lands'])->flush();
+        Cache::forget('lands.public');
+        Cache::forget('lands.auth');
 
-        return $this->success($this->getCachedLand($land->id), 'Land created');
+        return response()->json([
+            'success' => true,
+            'message' => 'Land created successfully.',
+            'data'    => $land->load(['images', 'latestPrice']),
+        ], 201);
     }
 
-   public function update(Request $request, $id)
+    // POST /admin/lands/{id}  (POST used for multipart/form-data compatibility)
+    public function update(Request $request, Land $land)
     {
-        $this->authorizeAdmin();
-
-        $land = Land::findOrFail($id);
-
-        $data = $request->validate([
-            'title' => 'sometimes|string',
-            'location' => 'sometimes|string',
-            'size' => 'sometimes|numeric',
-            'total_units' => 'sometimes|integer|min:1',
-            'description' => 'nullable|string',
-            'is_available' => 'sometimes|boolean',
-            'lat' => 'nullable|numeric|between:-90,90',
-            'lng' => 'nullable|numeric|between:-180,180',
-            'coordinates' => 'nullable|array',
-            'coordinates.type' => 'required_with:coordinates|in:Point,Polygon',
-            'coordinates.coordinates' => 'required_with:coordinates',
+        $request->validate([
+            'title'       => 'sometimes|string|max:200',
+            'location'    => 'sometimes|string|max:200',
+            'size'        => 'sometimes|numeric|min:1',
+            'description' => 'nullable|string|max:2000',
+            'geometry'    => 'sometimes|array',
+            'images'      => 'nullable|array|max:10',
+            'images.*'    => 'image|max:5120',
         ]);
 
-        // Normalize and validate coordinates if provided
-        if (!empty($data['coordinates'])) {
-            $data['coordinates'] = $this->normalizeCoordinates($data['coordinates']);
-            $this->validateGeoJSONStructure($data['coordinates']);
+        $updates = $request->only('title', 'location', 'size', 'description');
 
-            // Always update lat/lng from center for polygon
-            $center = $this->extractCenter($data['coordinates']);
-            $data['lat'] = $center['lat'];
-            $data['lng'] = $center['lng'];
+        if ($request->has('geometry')) {
+            try {
+                $this->geo->validateGeojson($request->geometry);
+            } catch (\InvalidArgumentException $e) {
+                throw ValidationException::withMessages(['geometry' => $e->getMessage()]);
+            }
 
-            // Update PostGIS geometry
-            $geometryWKT = $this->geoJsonToWKT($data['coordinates']);
-            DB::statement(
-                "UPDATE lands SET coordinates = ST_GeomFromText(?, 4326) WHERE id = ?",
-                [$geometryWKT, $land->id]
-            );
-        }
-        // If user sends lat/lng without coordinates, create Point geometry
-        else if (isset($data['lat'], $data['lng'])) {
-            $geometryWKT = sprintf('POINT(%F %F)', $data['lng'], $data['lat']);
-            DB::statement(
-                "UPDATE lands SET coordinates = ST_GeomFromText(?, 4326) WHERE id = ?",
-                [$geometryWKT, $land->id]
-            );
+            $wkt = $this->geo->toWkt($request->geometry);
+            $updates['coordinates'] = DB::raw("ST_GeomFromText('{$wkt}', 4326)");
+
+            if ($request->geometry['type'] === 'Polygon') {
+                $centroid          = $this->geo->polygonCentroid($request->geometry['coordinates']);
+                $updates['lat']    = $centroid['lat'];
+                $updates['lng']    = $centroid['lng'];
+            } else {
+                $updates['lng'] = $request->geometry['coordinates'][0];
+                $updates['lat'] = $request->geometry['coordinates'][1];
+            }
         }
 
-        // Update the model (this will update lat/lng if they were set from polygon center)
-        $land->update(collect($data)->except('price_per_unit_kobo')->toArray());
+        DB::transaction(function () use ($request, $land, $updates) {
+            $land->update($updates);
 
-        $this->handleImages($request, $land);
-        $this->refreshLandCache($land);
-        Cache::tags(['lands:list','maps','admin:lands'])->flush();
+            if ($request->hasFile('images')) {
+                foreach ($request->file('images') as $image) {
+                    $path = $image->store('lands', 'public');
+                    $land->images()->create(['image_path' => $path]);
+                }
+            }
+        });
 
-        return $this->success($this->getCachedLand($land->id), 'Land updated');
+        Cache::forget('lands.public');
+        Cache::forget('lands.auth');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Land updated.',
+            'data'    => $land->fresh()->load(['images', 'latestPrice']),
+        ]);
     }
 
+    // PATCH /admin/lands/{id}/price
     public function updatePrice(Request $request, Land $land)
     {
-        $this->authorizeAdmin();
-
-        $data = $request->validate([
+        $request->validate([
             'price_per_unit_kobo' => 'required|integer|min:1',
-            'price_date' => 'required|date',
+            'price_date'          => 'sometimes|date|before_or_equal:today',
         ]);
 
-        DB::transaction(function () use ($land, $data) {
-            LandPriceHistory::create([
-                'land_id' => $land->id,
-                'price_per_unit_kobo' => $data['price_per_unit_kobo'],
-                'price_date' => $data['price_date'],
-            ]);
+        $priceDate = $request->input('price_date', today()->toDateString());
 
-            event(new LandPriceChanged($land->id, $data['price_per_unit_kobo'], $data['price_date']));
-        });
+        $priceRecord = LandPriceHistory::updateOrCreate(
+            ['land_id' => $land->id, 'price_date' => $priceDate],
+            ['price_per_unit_kobo' => $request->price_per_unit_kobo]
+        );
 
-        $this->refreshLandCache($land);
-        Cache::tags(['lands:list', 'maps', 'admin:lands'])->flush();
+        event(new \App\Events\LandPriceChanged($land->id, $request->price_per_unit_kobo, $priceDate));
 
-        return $this->success($this->getCachedLand($land->id), 'Price updated');  
+        Cache::forget('lands.public');
+        Cache::forget('lands.auth');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Price updated.',
+            'data'    => $priceRecord,
+        ]);
     }
 
-    /* ================= HELPERS ================= */
-
-    private function authorizeAdmin()
+    // PATCH /admin/lands/{id}/availability  (enable / disable)
+    public function toggleAvailability(Request $request, Land $land)
     {
-        abort_if(!auth()->user()?->is_admin, 403);
+        $land->update(['is_available' => ! $land->is_available]);
+
+        Cache::forget('lands.public');
+        Cache::forget('lands.auth');
+
+        return response()->json([
+            'success'      => true,
+            'is_available' => $land->is_available,
+        ]);
     }
 
-    /**
-     * Normalize coordinates to ensure numeric values (not strings)
-     */
-    private function normalizeCoordinates(array $coords): array
+    // GET /admin/lands
+    public function adminIndex()
     {
-        if (!isset($coords['type'])) {
-            return $coords;
-        }
+        $lands = Land::with(['images', 'latestPrice'])
+            ->orderByDesc('created_at')
+            ->paginate(20);
 
-        if ($coords['type'] === 'Point') {
-            if (isset($coords['coordinates']) && is_array($coords['coordinates']) && count($coords['coordinates']) === 2) {
-                $coords['coordinates'][0] = (float) $coords['coordinates'][0]; // lng
-                $coords['coordinates'][1] = (float) $coords['coordinates'][1]; // lat
-            }
-        } elseif ($coords['type'] === 'Polygon') {
-            if (isset($coords['coordinates']) && is_array($coords['coordinates'])) {
-                foreach ($coords['coordinates'] as $ringIndex => &$ring) {
-                    if (is_array($ring)) {
-                        foreach ($ring as $pointIndex => &$point) {
-                            if (is_array($point) && count($point) === 2) {
-                                $point[0] = (float) $point[0]; // lng
-                                $point[1] = (float) $point[1]; // lat
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        return $coords;
-    }
-
-    /**
-     * Validate GeoJSON structure for Point or Polygon
-     */
-    private function validateGeoJSONStructure(array $coordinates)
-    {
-        $type = $coordinates['type'] ?? null;
-
-        if ($type === 'Point') {
-            $this->validatePointStructure($coordinates);
-        } elseif ($type === 'Polygon') {
-            $this->validatePolygonStructure($coordinates);
-        } else {
-            abort(422, 'Invalid GeoJSON: type must be "Point" or "Polygon"');
-        }
-    }
-
-    /**
-     * Validate Point structure
-     */
-    private function validatePointStructure(array $coordinates)
-    {
-        if (!isset($coordinates['coordinates']) || !is_array($coordinates['coordinates'])) {
-            abort(422, 'Invalid GeoJSON Point: coordinates array is required');
-        }
-
-        if (count($coordinates['coordinates']) !== 2) {
-            abort(422, 'Invalid GeoJSON Point: must be [lng, lat]');
-        }
-
-        [$lng, $lat] = $coordinates['coordinates'];
-
-        if (!is_numeric($lng) || $lng < -180 || $lng > 180) {
-            abort(422, 'Invalid GeoJSON Point: longitude must be between -180 and 180');
-        }
-
-        if (!is_numeric($lat) || $lat < -90 || $lat > 90) {
-            abort(422, 'Invalid GeoJSON Point: latitude must be between -90 and 90');
-        }
-    }
-
-    /**
-     * Validate Polygon structure
-     */
-    private function validatePolygonStructure(array $coordinates)
-    {
-        if (!isset($coordinates['coordinates']) || !is_array($coordinates['coordinates'])) {
-            abort(422, 'Invalid GeoJSON Polygon: coordinates array is required');
-        }
-
-        foreach ($coordinates['coordinates'] as $ringIndex => $ring) {
-            if (!is_array($ring) || count($ring) < 4) {
-                abort(422, "Invalid GeoJSON Polygon: Ring $ringIndex must have at least 4 points");
-            }
-
-            foreach ($ring as $pointIndex => $point) {
-                if (!is_array($point) || count($point) !== 2) {
-                    abort(422, "Invalid GeoJSON Polygon: Point $pointIndex in ring $ringIndex must be [lng, lat]");
-                }
-
-                [$lng, $lat] = $point;
-
-                if (!is_numeric($lng) || $lng < -180 || $lng > 180) {
-                    abort(422, "Invalid GeoJSON Polygon: Invalid longitude at point $pointIndex");
-                }
-
-                if (!is_numeric($lat) || $lat < -90 || $lat > 90) {
-                    abort(422, "Invalid GeoJSON Polygon: Invalid latitude at point $pointIndex");
-                }
-            }
-
-            $first = $ring[0];
-            $last = $ring[count($ring) - 1];
-            
-            if ($first[0] !== $last[0] || $first[1] !== $last[1]) {
-                abort(422, "Invalid GeoJSON Polygon: Ring $ringIndex must be closed");
-            }
-        }
-    }
-
-    /**
-     * Extract center point from GeoJSON
-     */
-    private function extractCenter(array $coords): array
-    {
-        if ($coords['type'] === 'Point') {
-            return [
-                'lat' => $coords['coordinates'][1],
-                'lng' => $coords['coordinates'][0]
-            ];
-        }
-
-        if ($coords['type'] === 'Polygon') {
-            $points = $coords['coordinates'][0];
-            $latSum = 0;
-            $lngSum = 0;
-            $count = count($points) - 1; // Exclude closing point
-
-            for ($i = 0; $i < $count; $i++) {
-                $lngSum += $points[$i][0];
-                $latSum += $points[$i][1];
-            }
-
-            return [
-                'lat' => $latSum / $count,
-                'lng' => $lngSum / $count
-            ];
-        }
-
-        return ['lat' => null, 'lng' => null];
-    }
-
-    /**
-     * Convert GeoJSON to WKT (Well-Known Text) for PostGIS
-     */
-    private function geoJsonToWKT(array $geoJson): string
-    {
-        if ($geoJson['type'] === 'Point') {
-            [$lng, $lat] = $geoJson['coordinates'];
-            return "POINT($lng $lat)";
-        }
-
-        if ($geoJson['type'] === 'Polygon') {
-            $rings = [];
-            foreach ($geoJson['coordinates'] as $ring) {
-                $points = array_map(fn($p) => "{$p[0]} {$p[1]}", $ring);
-                $rings[] = '(' . implode(', ', $points) . ')';
-            }
-            return 'POLYGON(' . implode(', ', $rings) . ')';
-        }
-
-        return '';
-    }
-
-    private function handleImages(Request $request, Land $land)
-    {
-        if (!$request->hasFile('images')) return;
-        foreach ($request->file('images') as $image) {
-            $path = $image->store('land_images', 'public');
-            $land->images()->create(['image_path' => $path]);
-        }
-    }
-
-    private function refreshLandCache(Land $land)
-    {
-        Cache::tags(['lands:item'])->forget("land:{$land->id}:full");
-        Cache::tags(['lands:item'])->forget("land:{$land->id}:map");
-        $this->getCachedLand($land->id);
-        $this->getCachedLand($land->id, true);
-    }
-
-    private function getCachedLand($id, $map = false)
-    {
-        $key = $map ? "land:$id:map" : "land:$id:full";
-
-        return Cache::tags(['lands:item'])->remember($key, now()->addMinutes(10), function () use ($id, $map) {
-            $land = Land::with(['images', 'latestPrice'])->find($id);
-            if (!$land) return null;
-
-            $polygon      = null;
-            $point        = null;
-            $geometryType = null;
-
-            if ($land->coordinates) {
-                $geoJson = DB::selectOne(
-                    "SELECT ST_AsGeoJSON(coordinates) as geojson FROM lands WHERE id = ?",
-                    [$land->id]
-                );
-
-                if ($geoJson && $geoJson->geojson) {
-                    $coords = json_decode($geoJson->geojson, true);
-
-                    if ($coords && isset($coords['type'])) {
-                        $geometryType = $coords['type'];
-
-                        if ($coords['type'] === 'Polygon' && isset($coords['coordinates'][0])) {
-                            $polygon = array_map(
-                                fn($p) => ['lat' => $p[1], 'lng' => $p[0]],
-                                $coords['coordinates'][0]
-                            );
-                        } elseif ($coords['type'] === 'Point' && isset($coords['coordinates'])) {
-                            $point = [
-                                'lat' => $coords['coordinates'][1],
-                                'lng' => $coords['coordinates'][0],
-                            ];
-                        }
-                    }
-                }
-            }
-
-            $payload = [
-                'id'                    => $land->id,
-                'title'                 => $land->title,
-                'location'              => $land->location,
-                'size'                  => $land->size,
-                'is_available'          => $land->is_available,
-                'price_per_unit_kobo'   => $land->current_price_per_unit_kobo,
-                'total_units'           => $land->total_units,
-                'available_units'       => $land->available_units,
-                'units_sold'            => $land->units_sold,
-                'sold_percentage'       => $land->sold_percentage,
-                'lat'                   => $land->lat,
-                'lng'                   => $land->lng,
-                'geometry_type'         => $geometryType,
-                'polygon'               => $polygon,
-                'point'                 => $point,
-                'has_polygon'           => !is_null($polygon),
-                'has_point'             => !is_null($point),
-            ];
-
-            if ($map) {
-                return $payload;
-            }
-
-            return $payload + [
-                'description' => $land->description,
-                'images'      => $land->images->map(fn($i) => [
-                    'id'  => $i->id,
-                    'url' => $i->image_url,
-                ]),
-            ];
-        });
-    }
-
-    private function success($data = null, $message = 'OK')
-    {
-        return response()->json(['success' => true, 'data' => $data, 'message' => $message]);
-    }
-
-    private function error($message, $code = 400)
-    {
-        return response()->json(['success' => false, 'message' => $message], $code);
+        return response()->json(['success' => true, 'data' => $lands]);
     }
 }
