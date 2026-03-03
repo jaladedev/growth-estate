@@ -75,6 +75,7 @@ Route::middleware(['jwt.auth', 'suspended'])->group(function () {
         Route::get('/user/stats',      [ProfileController::class, 'stats']);
         Route::get('/user/lands',      [ProfileController::class, 'lands']);
         Route::post('/user/change-password', [AuthController::class, 'changePassword']);
+        Route::get('/user/account-status', [ProfileController::class, 'accountStatus']);
 
         // Transaction PIN  (rate-limited for forgot/verify via throttle.sensitive)
         Route::post('/pin/set',         [PinController::class, 'set']);
