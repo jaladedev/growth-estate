@@ -33,60 +33,60 @@ class AuthController extends Controller
         ], $status);
     }
 
-    public function me()
-    {
-        try {
-            $user = auth()->user();
+    // public function me()
+    // {
+    //     try {
+    //         $user = auth()->user();
 
-            if (! $user) {
-                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
-            }
+    //         if (! $user) {
+    //             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    //         }
 
-            return response()->json([
-                'success' => true,
-                'user'    => [
-                    'id'                     => $user->id,
-                    'uid'                    => $user->uid,
-                    'name'                   => $user->name,
-                    'email'                  => $user->email,
-                    'email_verified_at'      => $user->email_verified_at,
-                    'transaction_pin'        => (bool) $user->transaction_pin,
-                    'is_admin'               => $user->is_admin,
-                    'created_at'             => $user->created_at,
-                    'updated_at'             => $user->updated_at,
+    //         return response()->json([
+    //             'success' => true,
+    //             'user'    => [
+    //                 'id'                     => $user->id,
+    //                 'uid'                    => $user->uid,
+    //                 'name'                   => $user->name,
+    //                 'email'                  => $user->email,
+    //                 'email_verified_at'      => $user->email_verified_at,
+    //                 'transaction_pin'        => (bool) $user->transaction_pin,
+    //                 'is_admin'               => $user->is_admin,
+    //                 'created_at'             => $user->created_at,
+    //                 'updated_at'             => $user->updated_at,
 
-                    // ── Balances ──────────────────────────────────────────
-                    'balance_kobo'           => $user->balance_kobo,
-                    'balance_naira'          => $user->balance_kobo / 100,
-                    'rewards_balance_kobo'   => $user->rewards_balance_kobo,
-                    'rewards_balance_naira'  => $user->rewards_balance_kobo / 100,
-                    'total_spendable_kobo'   => $user->total_spendable_kobo,
-                    'total_spendable_naira'  => $user->total_spendable_kobo / 100,
+    //                 // ── Balances ──────────────────────────────────────────
+    //                 'balance_kobo'           => $user->balance_kobo,
+    //                 'balance_naira'          => $user->balance_kobo / 100,
+    //                 'rewards_balance_kobo'   => $user->rewards_balance_kobo,
+    //                 'rewards_balance_naira'  => $user->rewards_balance_kobo / 100,
+    //                 'total_spendable_kobo'   => $user->total_spendable_kobo,
+    //                 'total_spendable_naira'  => $user->total_spendable_kobo / 100,
 
-                    // ── Bank ─────────────────────────────────────────────
-                    'bank_name'              => $user->bank_name,
-                    'bank_code'              => $user->bank_code,
-                    'account_number'         => $user->account_number,
-                    'account_name'           => $user->account_name,
+    //                 // ── Bank ─────────────────────────────────────────────
+    //                 'bank_name'              => $user->bank_name,
+    //                 'bank_code'              => $user->bank_code,
+    //                 'account_number'         => $user->account_number,
+    //                 'account_name'           => $user->account_name,
 
-                    // ── Referral ─────────────────────────────────────────
-                    'referral_code'          => $user->referral_code,
+    //                 // ── Referral ─────────────────────────────────────────
+    //                 'referral_code'          => $user->referral_code,
 
-                    // ── KYC ──────────────────────────────────────────────
-                    'is_kyc_verified'        => $user->is_kyc_verified,
-                    'kyc_status'             => $user->kyc_status,
-                ],
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Error fetching user profile', ['error' => $e->getMessage()]);
+    //                 // ── KYC ──────────────────────────────────────────────
+    //                 'is_kyc_verified'        => $user->is_kyc_verified,
+    //                 'kyc_status'             => $user->kyc_status,
+    //             ],
+    //         ]);
+    //     } catch (\Exception $e) {
+    //         Log::error('Error fetching user profile', ['error' => $e->getMessage()]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Could not fetch user',
-                'error'   => config('app.debug') ? $e->getMessage() : null,
-            ], 500);
-        }
-    }
+    //         return response()->json([
+    //             'success' => false,
+    //             'message' => 'Could not fetch user',
+    //             'error'   => config('app.debug') ? $e->getMessage() : null,
+    //         ], 500);
+    //     }
+    // }
 
     public function register(Request $request)
     {
