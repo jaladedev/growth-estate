@@ -7,53 +7,90 @@ use App\Services\Payments\DepositService;
 use App\Services\Payments\MonnifyService;
 use App\Services\Payments\PaystackService;
 use Illuminate\Http\Request;
-use Tymon\JWTAuth\Facades\JWTAuth;
+use Illuminate\Support\Facades\Log;
 
 class DepositController extends Controller
 {
     public function initiateDeposit(Request $request)
     {
-        $user = JWTAuth::parseToken()->authenticate();
+        $user = $request->user();
 
         $request->validate([
-            'amount'  => 'required|integer|min:10000|max:1000000000',
-            'gateway' => 'required|in:paystack,monnify',
+            'amount'  => 'required|integer|min:100000|max:1000000000',
+            'gateway' => 'required|in:monnify,paystack',
         ]);
 
-        // amount is already in kobo — pass directly to service
-        $deposit = DepositService::createDepositKobo(
-            $user,
-            $request->amount,
-            $request->gateway
-        );
+        try {
+            $deposit = DepositService::createDepositKobo(
+                $user,
+                $request->amount,
+                $request->gateway
+            );
+        } catch (\Exception $e) {
+            Log::error('Deposit record creation failed', [
+                'user_id' => $user->id,
+                'amount'  => $request->amount,
+                'gateway' => $request->gateway,
+                'error'   => $e->getMessage(),
+            ]);
+
+            return response()->json(['error' => 'Could not create deposit. Please try again.'], 500);
+        }
 
         $callbackUrl = config('app.frontend_url') . "/wallet?reference={$deposit->reference}";
 
-        if ($deposit->gateway === 'paystack') {
-            $response = PaystackService::initialize(
-                $user->email,
-                $deposit->total_kobo,
-                $deposit->reference,
-                $callbackUrl
-            );
+        try {
+            if ($deposit->gateway === 'monnify') {
+              $response = MonnifyService::initialize(
+                    $user->email,
+                    $deposit->reference,
+                    $deposit->total_kobo,
+                    $callbackUrl,
+                    $user->name
+                );
 
-            $paymentUrl = $response['data']['authorization_url'] ?? null;
+                $paymentUrl = $response['responseBody']['checkoutUrl'] ?? null;
+            } else { // paystack
+                $response = PaystackService::initialize(
+                    $user->email,
+                    $deposit->total_kobo,
+                    $deposit->reference,
+                    $callbackUrl
+                );
 
-        } else { // monnify
-            $response = MonnifyService::initialize(
-                $user->email,
-                $deposit->reference,
-                $deposit->total_kobo,
-                $callbackUrl,
-                $user->name
-            );
+                $paymentUrl = $response['data']['authorization_url'] ?? null;
+            }
+        } catch (\Exception $e) {
+            $deposit->delete();
 
-            $paymentUrl = $response['responseBody']['checkoutUrl'] ?? null;
+            Log::error('Gateway initialization failed', [
+                'user_id'   => $user->id,
+                'reference' => $deposit->reference,
+                'gateway'   => $deposit->gateway,
+                'error'     => $e->getMessage(),
+            ]);
+
+            return response()->json(['error' => 'Payment gateway error. Please try again.'], 502);
         }
 
         if (! $paymentUrl) {
+            $deposit->delete();
+
+            Log::warning('Gateway returned no payment URL', [
+                'user_id'   => $user->id,
+                'reference' => $deposit->reference,
+                'gateway'   => $deposit->gateway,
+            ]);
+
             return response()->json(['error' => 'Payment initialization failed.'], 500);
         }
+
+        Log::info('Deposit initiated', [
+            'user_id'   => $user->id,
+            'reference' => $deposit->reference,
+            'gateway'   => $deposit->gateway,
+            'amount'    => $request->amount,
+        ]);
 
         return response()->json([
             'payment_url'     => $paymentUrl,
@@ -64,9 +101,11 @@ class DepositController extends Controller
         ]);
     }
 
-    public function verifyDeposit(string $reference)
+    public function verifyDeposit(Request $request, string $reference)
     {
-        $deposit = Deposit::where('reference', $reference)->first();
+        $deposit = Deposit::where('reference', $reference)
+            ->where('user_id', $request->user()->id)
+            ->first();
 
         if (! $deposit) {
             return response()->json(['status' => 'not_found'], 404);

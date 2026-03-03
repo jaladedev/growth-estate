@@ -25,9 +25,17 @@ class WithdrawalController extends Controller
         $user = JWTAuth::parseToken()->authenticate();
 
         $request->validate([
-            // Minimum ₦5,000 = 500,000 kobo
-            'amount' => 'required|integer|min:500000',
+            'amount'          => 'required|integer|min:500000',
+            'transaction_pin' => 'required|digits:4',
         ]);
+
+        if (! $user->transaction_pin) {
+            return response()->json(['message' => 'Transaction pin not set. Please set one in settings.'], 422);
+        }
+
+        if (! hash_equals($user->transaction_pin, hash('sha256', $request->transaction_pin))) {
+            return response()->json(['message' => 'Invalid transaction PIN.'], 422);
+        }
 
         if (! $user->is_kyc_verified) {
             return response()->json(['error' => 'KYC verification is required before withdrawing funds.'], 403);
@@ -49,7 +57,6 @@ class WithdrawalController extends Controller
                     throw new \Exception('Insufficient balance.');
                 }
 
-                // ── Daily limit check & increment (atomic, inside lock) ────────
                 $today = now()->toDateString();
 
                 if ($lockedUser->withdrawal_day !== $today) {
@@ -112,10 +119,10 @@ class WithdrawalController extends Controller
         } catch (\Exception $e) {
             Log::error('Withdrawal request failed', ['error' => $e->getMessage(), 'user_id' => $user->id]);
 
-            $clientErrors = ['Insufficient balance.', 'Daily withdrawal limit'];
+            $clientErrors = ['Insufficient balance.', 'Daily withdrawal limit', 'Invalid transaction PIN'];
             foreach ($clientErrors as $msg) {
                 if (str_starts_with($e->getMessage(), $msg)) {
-                    return response()->json(['error' => $e->getMessage()], 422);
+                    return response()->json(['message' => $e->getMessage()], 422);
                 }
             }
 
@@ -182,21 +189,10 @@ class WithdrawalController extends Controller
         return response()->json(['status' => 'handled']);
     }
 
-    /**
-     * Decrement the daily withdrawal total when a withdrawal is reversed/failed.
-     *
-     * Only decrements if the reversal happened on the same calendar day as the
-     * original withdrawal. If the day has rolled over, the counter already reset
-     * to 0 on the next withdrawal request, so we must not subtract from the new
-     * day's accumulation.
-     */
     private function decrementDailyTotal($user, int $amountKobo): void
     {
         $today = now()->toDateString();
 
-        // Only adjust the counter if we are still on the same day the
-        // withdrawal was initiated. If the day has changed the counter
-        // will be reset to 0 on the next withdrawal attempt anyway.
         DB::table('users')
             ->where('id', $user->id)
             ->where('withdrawal_day', $today)
