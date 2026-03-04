@@ -8,16 +8,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
-/**
- * Admin support ticket management.
- *
- * Routes (under /admin prefix + admin middleware):
- *   GET    /admin/support/tickets
- *   GET    /admin/support/tickets/{ticket}
- *   POST   /admin/support/tickets/{ticket}/reply
- *   PATCH  /admin/support/tickets/{ticket}/status
- *   DELETE /admin/support/tickets/{ticket}
- */
 class AdminSupportController extends Controller
 {
     // ─────────────────────────────────────────────────────────────────────────
@@ -30,10 +20,12 @@ class AdminSupportController extends Controller
             'priority' => ['sometimes', Rule::in(['low', 'normal', 'high'])],
             'category' => ['sometimes', Rule::in(['account', 'payment', 'kyc', 'investment', 'withdrawal', 'other'])],
             'search'   => 'sometimes|string|max:100',
-            'per_page' => 'sometimes|integer|min:5|max:100',
+            'per_page' => 'sometimes|integer|min:0|max:100',
         ]);
 
-        $tickets = SupportTicket::with(['user:id,name,email', 'latestMessage'])
+        $perPage = (int) $request->input('per_page', 20);
+
+        $query = SupportTicket::with(['user:id,name,email', 'latestMessage'])
             ->when($request->status,   fn ($q) => $q->where('status', $request->status))
             ->when($request->priority, fn ($q) => $q->where('priority', $request->priority))
             ->when($request->category, fn ($q) => $q->where('category', $request->category))
@@ -43,8 +35,9 @@ class AdminSupportController extends Controller
                    ->orWhere('guest_email', 'like', "%{$request->search}%");
             }))
             ->orderByRaw("CASE status WHEN 'open' THEN 0 WHEN 'waiting' THEN 1 ELSE 2 END")
-            ->orderByDesc('updated_at')
-            ->paginate($request->input('per_page', 20));
+            ->orderByDesc('updated_at');
+
+        $tickets = $perPage === 0 ? $query->get() : $query->paginate($perPage);
 
         return response()->json(['success' => true, 'data' => $tickets]);
     }
@@ -93,17 +86,14 @@ class AdminSupportController extends Controller
             'attachment_path' => $attachmentPath,
         ]);
 
-        // Mark as 'waiting' for user reply after admin responds
         $ticket->update(['status' => 'waiting']);
         $ticket->touch();
 
         Log::info('Admin replied to support ticket', [
-            'ticket_id'    => $ticket->id,
-            'reference'    => $ticket->reference,
-            'by_admin_id'  => $admin->id,
+            'ticket_id'   => $ticket->id,
+            'reference'   => $ticket->reference,
+            'by_admin_id' => $admin->id,
         ]);
-
-        // TODO: fire a TicketReplied notification to the ticket owner / guest email
 
         return response()->json([
             'success' => true,
@@ -151,7 +141,6 @@ class AdminSupportController extends Controller
     // ─────────────────────────────────────────────────────────────────────────
     public function destroy(Request $request, SupportTicket $ticket)
     {
-        // Only allow deleting closed tickets to prevent accidental loss
         if ($ticket->status !== 'closed') {
             return response()->json([
                 'success' => false,
