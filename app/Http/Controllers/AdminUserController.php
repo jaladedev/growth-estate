@@ -27,8 +27,8 @@ class AdminUserController extends Controller
     {
         $request->validate([
             'search'       => 'sometimes|string|max:100',
-            'suspended'    => 'sometimes|boolean',
-            'is_admin'     => 'sometimes|boolean',
+            'suspended'    => 'sometimes|in:0,1,true,false',
+            'is_admin'     => 'sometimes|in:0,1,true,false',
             'kyc_status'   => 'sometimes|in:not_submitted,pending,approved,rejected,resubmit',
             'per_page'     => 'sometimes|integer|min:0|max:100',
             'sort'         => 'sometimes|in:created_at,name,email,balance_kobo',
