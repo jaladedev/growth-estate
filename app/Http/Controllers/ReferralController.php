@@ -177,9 +177,16 @@ class ReferralController extends Controller
         ]);
     }
 
-    public function adminStats()
+   public function adminStats()
     {
         $this->authorizeAdmin();
+
+        $topReferrers = User::select(['id', 'name', 'email', 'referral_code'])
+            ->selectRaw('(SELECT COUNT(*) FROM referrals WHERE referrals.referrer_id = users.id) as referrals_count')
+            ->whereRaw('(SELECT COUNT(*) FROM referrals WHERE referrals.referrer_id = users.id) > 0')
+            ->orderByDesc('referrals_count')
+            ->take(10)
+            ->get();
 
         return response()->json([
             'success' => true,
@@ -189,11 +196,7 @@ class ReferralController extends Controller
                 'pending_referrals'    => Referral::pending()->count(),
                 'total_rewards_issued' => ReferralReward::sum('amount_kobo'),
                 'unclaimed_rewards'    => ReferralReward::unclaimed()->sum('amount_kobo'),
-                'top_referrers'        => User::withCount('referrals')
-                    ->having('referrals_count', '>', 0)
-                    ->orderByDesc('referrals_count')
-                    ->take(10)
-                    ->get(['id', 'name', 'email', 'referral_code']),
+                'top_referrers'        => $topReferrers,
             ],
         ]);
     }
