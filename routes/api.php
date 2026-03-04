@@ -166,6 +166,11 @@ Route::middleware(['jwt.auth', 'suspended'])->group(function () {
             // Users
             Route::patch('/users/{user}/suspend',   [AdminUserController::class, 'suspend']);
             Route::patch('/users/{user}/unsuspend', [AdminUserController::class, 'unsuspend']);
+            Route::get('/users',                      [AdminUserController::class, 'index']);
+            Route::get('/users/{user}',               [AdminUserController::class, 'show']);
+            Route::patch('/users/{user}/make-admin',  [AdminUserController::class, 'makeAdmin']);
+            Route::patch('/users/{user}/remove-admin',[AdminUserController::class, 'removeAdmin']);
+            Route::delete('/users/{user}',            [AdminUserController::class, 'destroy']);
 
             // Support tickets
             Route::prefix('support/tickets')->group(function () {

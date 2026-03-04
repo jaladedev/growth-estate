@@ -69,9 +69,6 @@ class KycController extends Controller
             'selfie'        => 'required|image|max:5120',
         ]);
 
-        // Store files to disk FIRST (outside the transaction so we can
-        // roll them back if the DB write fails), then wrap only the DB writes
-        // in a transaction. On any DB failure, delete the uploaded files.
         $idFrontPath = $request->file('id_front')->store('kyc/ids', 'local');
         $idBackPath  = $request->hasFile('id_back')
             ? $request->file('id_back')->store('kyc/ids', 'local')
@@ -121,7 +118,6 @@ class KycController extends Controller
         ]);
     }
 
-    
     public function getImageUrl(Request $request, $id, string $imageType)
     {
         $kyc  = KycVerification::findOrFail($id);
@@ -136,11 +132,9 @@ class KycController extends Controller
             return response()->json(['error' => 'Invalid image type.'], 422);
         }
 
-        $url = route('kyc.image', ['id' => $id, 'imageType' => $imageType]);
-
         return response()->json([
-            'url'        => $url,
-            'expires_at' => null, // streamed directly — no expiry needed
+            'url'        => url("/api/kyc/{$id}/image/{$imageType}"),
+            'expires_at' => null,
         ]);
     }
 
@@ -151,7 +145,7 @@ class KycController extends Controller
         $status = $request->query('status');
         $query  = KycVerification::with('user:id,name,email');
 
-        if ($status && in_array($status, ['pending', 'approved', 'rejected'])) {
+        if ($status && in_array($status, ['pending', 'approved', 'rejected', 'resubmit'])) {
             $query->where('status', $status);
         }
 
@@ -164,14 +158,14 @@ class KycController extends Controller
     {
         $this->authorizeAdmin();
 
-        $kyc = KycVerification::with('user:id,name,email')->findOrFail($id);
+        $kyc  = KycVerification::with('user:id,name,email')->findOrFail($id);
+        $data = $kyc->toArray();
 
-        $data                 = $kyc->toArray();
-        $data['id_front_url'] = route('kyc.image', ['id' => $kyc->id, 'imageType' => 'id_front']);
-        $data['id_back_url']  = $kyc->id_back_path
-            ? route('kyc.image', ['id' => $kyc->id, 'imageType' => 'id_back'])
-            : null;
-        $data['selfie_url']   = route('kyc.image', ['id' => $kyc->id, 'imageType' => 'selfie']);
+        $base = url("/api/kyc/{$kyc->id}/image");
+
+        $data['id_front_url'] = "{$base}/id_front";
+        $data['id_back_url']  = $kyc->id_back_path ? "{$base}/id_back" : null;
+        $data['selfie_url']   = "{$base}/selfie";
 
         unset($data['id_front_path'], $data['id_back_path'], $data['selfie_path']);
 
@@ -185,7 +179,10 @@ class KycController extends Controller
         $kyc = KycVerification::findOrFail($id);
 
         if ($kyc->status === 'approved') {
-            return response()->json(['success' => false, 'message' => 'KYC is already approved'], 400);
+            return response()->json([
+                'success' => false,
+                'message' => 'KYC is already approved',
+            ], 400);
         }
 
         $kyc->update([
@@ -195,7 +192,11 @@ class KycController extends Controller
             'rejection_reason' => null,
         ]);
 
-        return response()->json(['success' => true, 'message' => 'KYC approved successfully', 'data' => $kyc]);
+        return response()->json([
+            'success' => true,
+            'message' => 'KYC approved successfully',
+            'data'    => $kyc,
+        ]);
     }
 
     public function reject(Request $request, $id)
@@ -212,7 +213,11 @@ class KycController extends Controller
             'verified_by'      => auth()->id(),
         ]);
 
-        return response()->json(['success' => true, 'message' => 'KYC rejected', 'data' => $kyc]);
+        return response()->json([
+            'success' => true,
+            'message' => 'KYC rejected',
+            'data'    => $kyc,
+        ]);
     }
 
     public function requestResubmit(Request $request, $id)
@@ -228,7 +233,11 @@ class KycController extends Controller
             'verified_at'      => null,
         ]);
 
-        return response()->json(['success' => true, 'message' => 'Resubmission requested', 'data' => $kyc]);
+        return response()->json([
+            'success' => true,
+            'message' => 'Resubmission requested',
+            'data'    => $kyc,
+        ]);
     }
 
     private function authorizeAdmin(): void
