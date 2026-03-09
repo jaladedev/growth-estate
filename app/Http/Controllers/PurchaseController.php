@@ -150,7 +150,7 @@ class PurchaseController extends Controller
                     $land->id,
                     $request->units,
                     $actualAmountPaid,
-                    now(),
+                    now()->toDateTimeString(),
                     $reference,
                 ]);
 

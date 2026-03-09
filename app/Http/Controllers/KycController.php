@@ -172,7 +172,7 @@ class KycController extends Controller
         return response()->json(['success' => true, 'data' => $data]);
     }
 
-    public function approve($id)
+    public function adminApprove($id)
     {
         $this->authorizeAdmin();
 
@@ -199,7 +199,7 @@ class KycController extends Controller
         ]);
     }
 
-    public function reject(Request $request, $id)
+    public function adminReject(Request $request, $id)
     {
         $this->authorizeAdmin();
 
@@ -220,7 +220,7 @@ class KycController extends Controller
         ]);
     }
 
-    public function requestResubmit(Request $request, $id)
+    public function adminRequestResubmit(Request $request, $id)
     {
         $this->authorizeAdmin();
 
