@@ -88,13 +88,14 @@ class Land extends Model
 
     public function getUnitsSoldAttribute(): int
     {
-        return $this->total_units - $this->available_units;
+        return (int)($this->total_units ?? 0) - (int)($this->available_units ?? 0);
     }
 
     public function getSoldPercentageAttribute(): float
     {
-        if ($this->total_units === 0) return 0;
-        return round(($this->units_sold / $this->total_units) * 100, 2);
+        $total = (int)($this->total_units ?? 0);
+        if ($total === 0) return 0.0;
+        return round(($this->units_sold / $total) * 100, 2);
     }
 
     public function getMapColorAttribute(): string
