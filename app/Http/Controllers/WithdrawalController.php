@@ -9,9 +9,11 @@ use App\Notifications\WithdrawalFailedNotification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Tymon\JWTAuth\Facades\JWTAuth;
+
 
 class WithdrawalController extends Controller
 {
@@ -33,7 +35,7 @@ class WithdrawalController extends Controller
             return response()->json(['message' => 'Transaction pin not set. Please set one in settings.'], 422);
         }
 
-        if (! hash_equals($user->transaction_pin, hash('sha256', $request->transaction_pin))) {
+        if (! Hash::check($request->transaction_pin, $user->transaction_pin)) {
             return response()->json(['message' => 'Invalid transaction PIN.'], 422);
         }
 

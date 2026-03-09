@@ -36,7 +36,7 @@ class PurchaseController extends Controller
         try {
             return DB::transaction(function () use ($request, $landId, $user, $useRewards) {
 
-                $land = Land::lockForUpdate()->findOrFail($landId);
+                $land = Land::with('latestPrice')->lockForUpdate()->findOrFail($landId);
 
                 if (! $land->is_available || $land->available_units < $request->units) {
                     throw ValidationException::withMessages([
@@ -45,7 +45,14 @@ class PurchaseController extends Controller
                 }
 
                 $pricePerUnit = $land->current_price_per_unit_kobo;
-                $totalCost    = $pricePerUnit * $request->units;
+
+                if ($pricePerUnit <= 0) {
+                    throw ValidationException::withMessages([
+                        'land' => 'This property has no price set. Please contact support.',
+                    ]);
+                }
+
+                $totalCost = $pricePerUnit * $request->units;
 
                 // ── Step 1: Apply discount reward if available ────────────────
                 $discountApplied    = 0;
@@ -67,7 +74,7 @@ class PurchaseController extends Controller
 
                 $afterDiscount = $totalCost - $discountApplied;
 
-                // ── Step 2: Apply rewards balance ────────────────────────────
+                // ── Step 2: Apply rewards balance ─────────────────────────────
                 $rewardsUsed = 0;
                 $mainUsed    = $afterDiscount;
 
@@ -191,7 +198,13 @@ class PurchaseController extends Controller
         } catch (ValidationException $e) {
             throw $e;
         } catch (\Throwable $e) {
-            Log::error('Purchase failed', ['error' => $e->getMessage(), 'user_id' => $user->id, 'land_id' => $landId]);
+            Log::error('Purchase failed', [
+                'error'   => $e->getMessage(),
+                'file'    => $e->getFile(),
+                'line'    => $e->getLine(),
+                'user_id' => $user->id,
+                'land_id' => $landId,
+            ]);
             return response()->json(['error' => 'Purchase failed. Please try again.'], 500);
         }
     }
@@ -220,8 +233,16 @@ class PurchaseController extends Controller
                     throw ValidationException::withMessages(['units' => 'Not enough units to sell.']);
                 }
 
-                $land          = Land::lockForUpdate()->findOrFail($landId);
-                $pricePerUnit  = $land->current_price_per_unit_kobo;
+                $land = Land::with('latestPrice')->lockForUpdate()->findOrFail($landId);
+
+                $pricePerUnit = $land->current_price_per_unit_kobo;
+
+                if ($pricePerUnit <= 0) {
+                    throw ValidationException::withMessages([
+                        'land' => 'This property has no price set. Please contact support.',
+                    ]);
+                }
+
                 $totalReceived = $pricePerUnit * $request->units;
                 $reference     = 'SALE-' . Str::uuid();
 
@@ -278,7 +299,12 @@ class PurchaseController extends Controller
         } catch (ValidationException $e) {
             throw $e;
         } catch (\Throwable $e) {
-            Log::error('Sale failed', ['error' => $e->getMessage(), 'user_id' => $user->id]);
+            Log::error('Sale failed', [
+                'error'   => $e->getMessage(),
+                'file'    => $e->getFile(),
+                'line'    => $e->getLine(),
+                'user_id' => $user->id,
+            ]);
             return response()->json(['error' => 'Sale failed. Please try again.'], 500);
         }
     }
