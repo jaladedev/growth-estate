@@ -243,22 +243,25 @@ class PurchaseController extends Controller
                     ]);
                 }
 
-                $totalReceived = $pricePerUnit * $request->units;
-                $reference     = 'SALE-' . Str::uuid();
+                $totalReceived  = $pricePerUnit * $request->units;
+                $reference      = 'SALE-' . Str::uuid();
+                $remainingUnits = $purchase->units - $request->units;
 
-                $purchase->decrement('units', $request->units);
-                $purchase->increment('units_sold', $request->units);
-                $purchase->increment('total_amount_received_kobo', $totalReceived);
-                $purchase->sell_date = now();
-                $purchase->status    = $purchase->units === 0 ? 'sold_out' : 'partially_sold';
-                $purchase->reference = $reference;
-                $purchase->save();
+                $purchase->update([
+                    'units'                      => $remainingUnits,
+                    'units_sold'                 => $purchase->units_sold + $request->units,
+                    'total_amount_received_kobo' => $purchase->total_amount_received_kobo + $totalReceived,
+                    'sell_date'                  => now(),
+                    'status'                     => $remainingUnits === 0 ? 'sold_out' : 'partially_sold',
+                    'reference'                  => $reference,
+                ]);
 
+                // ── Update land ───────────────────────────────────────────────
                 $land->increment('available_units', $request->units);
                 $land->is_available = true;
                 $land->save();
 
-                // Credit main wallet — sale proceeds are never rewards
+                // ── Credit main wallet ────────────────────────────────────────
                 $user->increment('balance_kobo', $totalReceived);
                 $balanceAfter = $user->fresh()->balance_kobo;
 
@@ -270,10 +273,12 @@ class PurchaseController extends Controller
                     'reference'     => $reference,
                 ]);
 
+                // ── Update portfolio ──────────────────────────────────────────
                 UserLand::where('user_id', $user->id)
                     ->where('land_id', $land->id)
                     ->decrement('units', $request->units);
 
+                // ── Transaction log ───────────────────────────────────────────
                 Transaction::create([
                     'user_id'          => $user->id,
                     'land_id'          => $land->id,

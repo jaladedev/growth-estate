@@ -125,14 +125,22 @@ class ProfileController extends Controller
     // =========================================================================
     // GET /user/stats
     // =========================================================================
-    public function stats(Request $request): JsonResponse
+  public function stats(Request $request): JsonResponse
     {
         $userId = $request->user()->id;
 
-        $totalInvested   = Purchase::where('user_id', $userId)->sum('total_amount_paid_kobo');
-        $totalReceived   = Purchase::where('user_id', $userId)->sum('total_amount_received_kobo');
-        $totalUnits      = Purchase::where('user_id', $userId)->sum('units');
-        $totalLands      = Purchase::where('user_id', $userId)->where('units', '>', 0)->count();
+        $investedData = Purchase::where('user_id', $userId)
+            ->whereIn('status', ['completed', 'partially_sold'])
+            ->selectRaw('SUM(total_amount_paid_kobo) as total_paid, SUM(total_amount_received_kobo) as total_received')
+            ->first();
+
+        $totalPaid     = $investedData->total_paid     ?? 0;
+        $totalReceived = $investedData->total_received ?? 0;
+        $totalInvested = $totalPaid - $totalReceived;
+
+        $totalUnits  = Purchase::where('user_id', $userId)->sum('units');
+        $totalLands  = Purchase::where('user_id', $userId)->where('units', '>', 0)->count();
+
         $totalWithdrawn  = \App\Models\Withdrawal::where('user_id', $userId)
             ->where('status', 'completed')
             ->sum('amount_kobo');
@@ -140,23 +148,29 @@ class ProfileController extends Controller
             ->where('status', 'pending')
             ->count();
 
+        $portfolio = \App\Services\PortfolioService::summary($userId);
+
         return response()->json([
             'success' => true,
             'data'    => [
-                'balance'             => $request->user()->wallet_balance ?? 0,
-                'total_invested'      => $totalInvested,
-                'total_received'      => $totalReceived,
-                'units_owned'         => $totalUnits,
-                'lands_owned'         => $totalLands,
-                'total_withdrawn'     => $totalWithdrawn,
-                'pending_withdrawals' => $pendingWithdraw,
-                'pin_is_set'          => $this->userHasPin($request->user()),
-                'is_kyc_verified'     => $this->isKycVerified($request->user()),
-                'kyc_status'          => $this->resolveKycStatus($request->user()),
+                'balance_kobo'                  => $request->user()->balance_kobo ?? 0,
+                'total_invested_kobo'           => $totalInvested,
+                'total_received_kobo'           => (int) $totalReceived,
+                'current_portfolio_value_kobo'  => $portfolio['current_portfolio_value_kobo'],
+                'current_portfolio_value_naira' => $portfolio['current_portfolio_value_naira'],
+                'total_profit_loss_kobo'        => $portfolio['total_profit_loss_kobo'],
+                'total_profit_loss_naira'       => $portfolio['total_profit_loss_naira'],
+                'profit_loss_percent'           => $portfolio['profit_loss_percent'],
+                'units_owned'                   => $totalUnits,
+                'lands_owned'                   => $totalLands,
+                'total_withdrawn_kobo'          => $totalWithdrawn,
+                'pending_withdrawals'           => $pendingWithdraw,
+                'pin_is_set'                    => $this->userHasPin($request->user()),
+                'is_kyc_verified'               => $this->isKycVerified($request->user()),
+                'kyc_status'                    => $this->resolveKycStatus($request->user()),
             ],
         ]);
     }
-
     // =========================================================================
     // GET /user/lands
     // =========================================================================
