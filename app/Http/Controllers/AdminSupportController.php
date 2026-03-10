@@ -7,6 +7,7 @@ use App\Models\SupportTicket;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Storage;
 
 class AdminSupportController extends Controller
 {
@@ -163,4 +164,26 @@ class AdminSupportController extends Controller
             'message' => "Ticket {$reference} deleted.",
         ]);
     }
+
+    public function attachment(SupportMessage $message)
+    {
+        if (!$message->attachment_path) {
+            return response()->json(['message' => 'No attachment on this message.'], 404);
+        }
+
+        if (!Storage::disk('private')->exists($message->attachment_path)) {
+            return response()->json(['message' => 'File not found.'], 404);
+        }
+
+        return Storage::disk('private')->response($message->attachment_path);
+    }
+
+    //cloudflare
+    // public function attachment(SupportMessage $message)
+    // {
+    //     if (!Storage::disk('r2')->exists($message->attachment_path)) {
+    //         return response()->json(['message' => 'File not found.'], 404);
+    //     }
+    //     return Storage::disk('r2')->response($message->attachment_path);
+    // }
 }

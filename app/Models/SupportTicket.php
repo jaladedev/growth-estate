@@ -26,4 +26,9 @@ class SupportTicket extends Model
     {
         return $this->belongsTo(User::class);
     }
+
+    public function latestMessage()
+    {
+        return $this->hasOne(SupportMessage::class, 'ticket_id')->latestOfMany();
+    }
 }

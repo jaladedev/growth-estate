@@ -128,6 +128,7 @@ Route::middleware(['jwt.auth', 'suspended'])->group(function () {
         Route::post('/support/tickets',                [SupportController::class, 'storeTicket']);
         Route::get('/support/tickets/{ticket}',        [SupportController::class, 'showTicket']);
         Route::post('/support/tickets/{ticket}/reply', [SupportController::class, 'replyTicket']);
+        Route::get('/support/tickets/{ticket}/messages/{message}/attachment', [SupportController::class, 'messageAttachment']);
 
         // Notifications
         Route::prefix('notifications')->group(function () {
@@ -179,6 +180,7 @@ Route::middleware(['jwt.auth', 'suspended'])->group(function () {
                 Route::post('/{ticket}/reply',   [AdminSupportController::class, 'reply']);
                 Route::patch('/{ticket}/status', [AdminSupportController::class, 'updateStatus']);
                 Route::delete('/{ticket}',       [AdminSupportController::class, 'destroy']);
+                Route::get('/{message}/attachment', [AdminSupportController::class, 'attachment']);
             });
         });
     });

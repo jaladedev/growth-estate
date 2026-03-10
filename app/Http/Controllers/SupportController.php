@@ -267,7 +267,7 @@ class SupportController extends Controller
     // LIST USER TICKETS  —  GET /api/support/tickets
     // ═══════════════════════════════════════════════════════════════════════════
 
-    public function listTickets(Request $request): JsonResponse
+    public function indexTickets(Request $request): JsonResponse
     {
         $tickets = SupportTicket::where('user_id', $request->user()->id)
             ->with(['messages' => fn ($q) => $q->latest()->limit(1)])
@@ -298,7 +298,7 @@ class SupportController extends Controller
     // REPLY TO TICKET  —  POST /api/support/tickets/{ticket}/reply
     // ═══════════════════════════════════════════════════════════════════════════
 
-    public function replyToTicket(Request $request, SupportTicket $ticket): JsonResponse
+    public function replyTicket(Request $request, SupportTicket $ticket): JsonResponse
     {
         if ($ticket->user_id !== $request->user()->id) {
             return response()->json(['success' => false, 'message' => 'Ticket not found.'], 404);
@@ -486,6 +486,28 @@ class SupportController extends Controller
             ->store('support-attachments', 'private');
     }
 
+    public function messageAttachment(Request $request, SupportTicket $ticket, SupportMessage $message)
+    {
+        // Ensure ticket belongs to this user
+        if ($ticket->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Not found.'], 404);
+        }
+
+        // Ensure message belongs to this ticket
+        if ($message->ticket_id !== $ticket->id) {
+            return response()->json(['message' => 'Not found.'], 404);
+        }
+
+        if (!$message->attachment_path) {
+            return response()->json(['message' => 'No attachment.'], 404);
+        }
+
+        if (!Storage::disk('private')->exists($message->attachment_path)) {
+            return response()->json(['message' => 'File not found.'], 404);
+        }
+
+        return Storage::disk('private')->response($message->attachment_path);
+    }
     /**
      * Resolve ticket priority based on category and optional user-supplied priority.
      */
