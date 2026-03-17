@@ -36,7 +36,7 @@ class ReferralController extends Controller
             'success' => true,
             'data'    => [
                 'referral_code'          => $user->referral_code,
-                'referral_link'          => "{$this->frontendUrl}/register?ref={$user->referral_code}",
+                'referral_link'          => "{$this->frontendUrl}/?ref={$user->referral_code}",
                 'total_referrals'        => $referrals->count(),
                 'completed_referrals'    => $referrals->where('status', 'completed')->count(),
                 'pending_referrals'      => $referrals->where('status', 'pending')->count(),
@@ -87,9 +87,6 @@ class ReferralController extends Controller
         ]);
     }
 
-    /**
-     * Claim a pending reward.
-     */
     public function claimReward(int $rewardId)
     {
         $reward = ReferralReward::where('id', $rewardId)
@@ -107,18 +104,14 @@ class ReferralController extends Controller
             $reward->claim();
 
             switch ($reward->reward_type) {
-
                 case 'cashback':
                     if ($reward->amount_kobo > 0) {
                         $user = User::lockForUpdate()->find($reward->user_id);
-
-                        // Credit the REWARDS wallet, not the main wallet
                         $user->creditRewards(
                             $reward->amount_kobo,
                             'REF-REWARD-' . $reward->id,
                             'Referral cashback reward'
                         );
-
                         Log::info('Referral cashback credited to rewards wallet', [
                             'user_id'              => $user->id,
                             'reward_id'            => $reward->id,
@@ -177,7 +170,7 @@ class ReferralController extends Controller
         ]);
     }
 
-   public function adminStats()
+    public function adminStats()
     {
         $this->authorizeAdmin();
 
