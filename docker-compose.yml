@@ -3,20 +3,21 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: growth-estate-app
+    image: sproutvest-app
     container_name: laravel-app
     restart: unless-stopped
-    working_dir: /var/www/html
-    environment:
-      HOME: /var/www/html
+    env_file: .env
     volumes:
       - ./:/var/www/html
+      - /var/www/html/vendor
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - laravel
-  
+
   webserver:
     image: nginx:alpine
     container_name: nginx-server
@@ -32,34 +33,42 @@ services:
       - laravel
 
   scheduler:
-    image: growth-estate-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sproutvest-scheduler
     container_name: laravel-scheduler
     restart: unless-stopped
-    working_dir: /var/www/html
-    environment:
-      HOME: /var/www/html
+    env_file: .env
     volumes:
       - ./:/var/www/html
+      - /var/www/html/vendor
     command: php artisan schedule:work
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - laravel
 
   queue:
-    image: growth-estate-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sproutvest-queue
     container_name: laravel-queue
     restart: unless-stopped
-    working_dir: /var/www/html
-    environment:
-      HOME: /var/www/html
+    env_file: .env
     volumes:
       - ./:/var/www/html
+      - /var/www/html/vendor
     command: php artisan queue:work --sleep=3 --tries=3 --timeout=90
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - laravel
 
@@ -75,6 +84,11 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U laravel -d growthpoles"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - laravel
 

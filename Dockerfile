@@ -3,34 +3,33 @@ FROM php:8.3-fpm
 WORKDIR /var/www/html
 ENV HOME=/var/www/html
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    curl \
-    zip \
-    unzip \
-    libpng-dev \
-    libonig-dev \
-    libxml2-dev \
-    libzip-dev \
-    libpq-dev \
-    supervisor \
+    git curl zip unzip \
+    libpng-dev libonig-dev libxml2-dev libzip-dev libpq-dev \
+    postgresql-client \
     && docker-php-ext-install pdo pdo_pgsql mbstring exif pcntl bcmath gd zip \
     && pecl install redis \
     && docker-php-ext-enable redis \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Copy entire project INCLUDING vendor
 COPY . .
+COPY entrypoint.sh /entrypoint.sh
 
-# Fix permissions
-RUN chown -R www-data:www-data /var/www/html \
-    && chmod -R 775 storage bootstrap/cache
+RUN composer install --optimize-autoloader --no-dev \
+    && mkdir -p storage/app/public/seed/lands \
+    && mkdir -p storage/framework/{cache,sessions,views} \
+    && mkdir -p storage/logs \
+    && mkdir -p bootstrap/cache \
+    && if [ -d "database/seeders/images/lands" ]; then \
+        cp -r database/seeders/images/lands/* storage/app/public/seed/lands/ 2>/dev/null || true; \
+       fi \
+    && chown -R www-data:www-data /var/www/html \
+    && chmod -R 775 storage bootstrap/cache \
+    && chmod +x /entrypoint.sh
 
-USER www-data
+EXPOSE 9000
 
-CMD ["php-fpm"]
+CMD ["/entrypoint.sh"]
