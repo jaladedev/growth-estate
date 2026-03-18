@@ -13,7 +13,13 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
-    
+
+        $middleware->validateCsrfTokens(except: [
+            'api/paystack/webhook',
+            'api/monnify/webhook',
+            'api/opay/webhook',       
+        ]);
+        
         $middleware->alias([
             // Auth
             'auth'               => \App\Http\Middleware\Authenticate::class,
