@@ -22,12 +22,10 @@ RUN composer install --optimize-autoloader --no-dev \
     && mkdir -p storage/app/public/seed/lands \
     && mkdir -p storage/framework/{cache,sessions,views} \
     && mkdir -p storage/logs \
-    && mkdir -p bootstrap/cache \
+    && bootstrap/cache \
     && if [ -d "database/seeders/images/lands" ]; then \
         cp -r database/seeders/images/lands/* storage/app/public/seed/lands/ 2>/dev/null || true; \
        fi \
-    && chown -R www-data:www-data /var/www/html \
-    && chmod -R 775 storage bootstrap/cache \
     && chmod +x /entrypoint.sh
 
 EXPOSE 9000
