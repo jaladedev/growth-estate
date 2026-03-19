@@ -23,14 +23,14 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
         'email_verified_at',
         'transaction_pin',
         'pin_reset_code',
-        'pin_reset_expires_at',
+        'pin_reset_expires_at',        
         'verification_code',
         'verification_code_expiry',
         'password_reset_code',
         'password_reset_code_expires_at',
         'password_reset_verified',
         'balance_kobo',
-        'rewards_balance_kobo',      
+        'rewards_balance_kobo',
         'bank_name',
         'bank_code',
         'account_number',
@@ -56,8 +56,10 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
         'password'                       => 'hashed',
         'verification_code_expiry'       => 'datetime',
         'password_reset_code_expires_at' => 'datetime',
+        'pin_reset_expires_at'           => 'datetime',  
+        'pin_reset_expires_at'           => 'datetime',  
         'balance_kobo'                   => 'integer',
-        'rewards_balance_kobo'           => 'integer',  
+        'rewards_balance_kobo'           => 'integer',
         'referred_by'                    => 'integer',
         'is_admin'                       => 'boolean',
         'is_suspended'                   => 'boolean',
@@ -67,21 +69,8 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
     protected static function booted()
     {
         static::creating(function ($user) {
-            $maxAttempts = 10;
-            $attempts    = 0;
-
-            do {
-                $uid = 'USR-' . strtoupper(Str::random(6));
-                $attempts++;
-
-                if ($attempts >= $maxAttempts) {
-                    throw new \RuntimeException(
-                        'Unable to generate a unique user UID after ' . $maxAttempts . ' attempts.'
-                    );
-                }
-            } while (self::where('uid', $uid)->exists());
-
-            $user->uid = $uid;
+            // Use UUID format to match existing DB records
+            $user->uid = (string) Str::uuid();
         });
 
         static::created(function (User $user) {
@@ -113,7 +102,6 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
 
     public function getJWTIdentifier()
     {
-        // Use non-sequential uid to prevent user enumeration via token subjects
         return $this->uid;
     }
 
@@ -243,8 +231,9 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
 
     /*
     |--------------------------------------------------------------------------
-    | Rewards Wallet Helpers (NEW)
+    | Rewards Wallet Helpers
     |--------------------------------------------------------------------------
+    */
 
     /**
      * Credit the rewards wallet.
@@ -259,7 +248,7 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
             'uid'                   => $this->id,
             'type'                  => 'reward_credit',
             'amount_kobo'           => $amountKobo,
-            'balance_after'         => $this->fresh()->balance_kobo, 
+            'balance_after'         => $this->fresh()->balance_kobo,
             'rewards_balance_after' => $rewardsAfter,
             'reference'             => $reference,
             'note'                  => $note ?: 'Reward credit',
@@ -283,7 +272,7 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
             'uid'                   => $this->id,
             'type'                  => 'reward_spend',
             'amount_kobo'           => $amountKobo,
-            'balance_after'         => $this->fresh()->balance_kobo, 
+            'balance_after'         => $this->fresh()->balance_kobo,
             'rewards_balance_after' => $rewardsAfter,
             'reference'             => $reference,
             'note'                  => $note ?: 'Reward spend',
@@ -294,7 +283,6 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
 
     /**
      * Total spendable balance = main wallet + rewards wallet.
-     * Used at purchase checkout to show maximum purchasing power.
      */
     public function getTotalSpendableKoboAttribute(): int
     {
