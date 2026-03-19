@@ -46,3 +46,8 @@ $prices = \App\Models\LandPriceHistory::currentPricesForLands($landIds);
 foreach ($prices as $landId => $price) {
     echo "Land {$landId}: ₦" . ($price->price_per_unit_kobo / 100) . " - Date: {$price->price_date}\n";
 }
+$key= config('services.opay.secret_key');
+echo strlen($key)
+echo bin2hex($key[-1]);
+var_dump($key);
+exit
