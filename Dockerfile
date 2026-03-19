@@ -13,6 +13,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# ── PHP upload limits ─────────────────────────────────────────────────────────
+RUN echo "upload_max_filesize = 10M\n\
+post_max_size = 12M\n\
+memory_limit = 256M\n\
+max_execution_time = 60\n\
+max_input_time = 60" > /usr/local/etc/php/conf.d/uploads.ini
+
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 COPY . .

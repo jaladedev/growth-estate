@@ -13,6 +13,7 @@ services:
     volumes:
       - ./:/var/www/html
       - /var/www/html/vendor
+      - ./docker/php/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini
     depends_on:
       db:
         condition: service_healthy
