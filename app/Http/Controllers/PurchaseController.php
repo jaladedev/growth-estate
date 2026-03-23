@@ -180,7 +180,7 @@ class PurchaseController extends Controller
                     $this->completeReferral($user);
                 }
 
-                event(new LandUnitsPurchased($user->id, $land->id, $request->units, $pricePerUnit, $totalCost));
+                event(new LandUnitsPurchased($user->id, $land->id, $request->units, $pricePerUnit, $totalCost,  $reference));
 
                 return response()->json([
                     'message'                   => 'Purchase successful.',

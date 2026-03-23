@@ -91,16 +91,24 @@ class LandController extends Controller
     // GET /lands/{id}/units
     public function units(Land $land)
     {
+        $user = auth()->user();
+    
+        $userUnits = $user
+        ? (int) $land->users()
+            ->wherePivot('user_id', $user->id)
+            ->sum('user_land.units')
+        : null;
+    
         return response()->json([
             'success' => true,
             'data'    => [
                 'total_units'     => $land->total_units,
                 'available_units' => $land->available_units,
                 'sold_units'      => $land->total_units - $land->available_units,
+                'user_units'      => $userUnits,
             ],
         ]);
     }
-
     // ─────────────────────────────────────────────────────────────────────────
     // ADMIN
     // ─────────────────────────────────────────────────────────────────────────
@@ -108,6 +116,15 @@ class LandController extends Controller
     // POST /admin/lands
     public function store(Request $request)
     {
+        // Decode geometry if the client sent it as a JSON string
+        // (happens with multipart/form-data requests that cannot nest arrays)
+        if ($request->has('geometry') && is_string($request->geometry)) {
+            $decoded = json_decode($request->geometry, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $request->merge(['geometry' => $decoded]);
+            }
+        }
+
         $request->validate([
             'title'        => 'required|string|max:200',
             'location'     => 'required|string|max:200',
@@ -182,12 +199,21 @@ class LandController extends Controller
     // POST /admin/lands/{id}  (POST used for multipart/form-data compatibility)
     public function update(Request $request, Land $land)
     {
+        // Decode geometry if the client sent it as a JSON string
+        if ($request->has('geometry') && is_string($request->geometry)) {
+            $decoded = json_decode($request->geometry, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $request->merge(['geometry' => $decoded]);
+            }
+        }
+
         $request->validate([
             'title'       => 'sometimes|string|max:200',
             'location'    => 'sometimes|string|max:200',
             'size'        => 'sometimes|numeric|min:1',
             'description' => 'nullable|string|max:2000',
             'geometry'    => 'sometimes|array',
+            'geometry.type' => 'required_with:geometry|in:Point,Polygon',
             'images'      => 'nullable|array|max:10',
             'images.*'    => 'image|max:5120',
         ]);

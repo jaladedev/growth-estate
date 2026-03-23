@@ -13,62 +13,88 @@ class WithdrawalConfirmed extends Notification implements ShouldQueue
 {
     use Queueable;
 
-    protected $withdrawal;
+    public int $tries   = 3;
+    public int $backoff = 60;
+
+    protected array $withdrawalData;
 
     public function __construct(Withdrawal $withdrawal)
     {
-        $this->withdrawal = $withdrawal;
+        $this->withdrawalData = [
+            'id'          => $withdrawal->id,
+            'reference'   => $withdrawal->reference,
+            'amount_kobo' => $withdrawal->amount_kobo ?? 0,
+            'bank_name'   => $withdrawal->user?->bank_name ?? null,
+            'account'     => $withdrawal->user?->account_number
+                             ? '****' . substr($withdrawal->user->account_number, -4)
+                             : null,
+            'date'        => now()->toFormattedDateString(),
+        ];
     }
 
-    public function via($notifiable)
+    public function via($notifiable): array
     {
         return ['mail', 'database', 'broadcast'];
     }
 
-    // Email representation
-    public function toMail($notifiable)
+    public function toMail($notifiable): MailMessage
     {
-        $amount = number_format(($this->withdrawal->amount_kobo ?? 0) / 100, 2);
+        $amount    = number_format($this->withdrawalData['amount_kobo'] / 100, 2);
+        $reference = $this->withdrawalData['reference'];
+        $bank      = $this->withdrawalData['bank_name'];
+        $account   = $this->withdrawalData['account'];
+        $date      = $this->withdrawalData['date'];
+        $appName   = config('app.name');
+        $walletUrl = rtrim(config('app.frontend_url'), '/') . '/wallet';
 
-        return (new MailMessage)
-            ->subject('Withdrawal Confirmation')
-            ->greeting('Hello ' . $notifiable->name . '!')
-            ->line("Your withdrawal of ₦{$amount} has been successfully processed.")
-            ->line('Transaction Reference: ' . $this->withdrawal->reference)
-            ->action('View Account', url('/account'))
-            ->line('Thank you for using our application!')
-            ->salutation('Best regards, ' . config('app.name'));
+        $mail = (new MailMessage)
+            ->subject("Withdrawal of ₦{$amount} Processed")
+            ->greeting('Hello ' . $notifiable->name . ',')
+            ->line("Your withdrawal has been successfully processed. Here are the details:")
+            ->line("**Amount:** ₦{$amount}")
+            ->line("**Reference:** {$reference}")
+            ->line("**Date:** {$date}");
+
+        if ($bank && $account) {
+            $mail->line("**Sent to:** {$bank} — {$account}");
+        }
+
+        return $mail
+            ->action('View Wallet', $walletUrl)
+            ->line("Please allow 1–3 business days for the funds to appear in your bank account.")
+            ->line("If you did not initiate this withdrawal, please contact support immediately.")
+            ->salutation("Best regards, The {$appName} Team");
     }
 
-    // Database representation
-    public function toDatabase($notifiable)
+    public function toDatabase($notifiable): array
     {
-        $amountKobo = $this->withdrawal->amount_kobo ?? 0;
+        $amount = number_format($this->withdrawalData['amount_kobo'] / 100, 2);
 
         return [
-            'message' => 'Your withdrawal of ₦' . number_format($amountKobo / 100, 2) . ' has been successfully processed.',
-            'reference' => $this->withdrawal->reference,
-            'amount_kobo' => $amountKobo,
-            'status' => 'completed',
-            'processed_at' => now(),
+            'withdrawal_id' => $this->withdrawalData['id'],
+            'reference'     => $this->withdrawalData['reference'],
+            'amount_kobo'   => $this->withdrawalData['amount_kobo'],
+            'status'        => 'completed',
+            'message'       => "Your withdrawal of ₦{$amount} has been successfully processed.",
+            'processed_at'  => now(),
         ];
     }
 
-    // Broadcast representation
-    public function toBroadcast($notifiable)
+    public function toBroadcast($notifiable): BroadcastMessage
     {
-        $amountKobo = $this->withdrawal->amount_kobo ?? 0;
+        $amount = number_format($this->withdrawalData['amount_kobo'] / 100, 2);
 
         return new BroadcastMessage([
-            'message' => 'Your withdrawal of ₦' . number_format($amountKobo / 100, 2) . ' has been successfully processed.',
-            'reference' => $this->withdrawal->reference,
-            'amount_kobo' => $amountKobo,
-            'status' => 'completed',
-            'processed_at' => now(),
+            'withdrawal_id' => $this->withdrawalData['id'],
+            'reference'     => $this->withdrawalData['reference'],
+            'amount_kobo'   => $this->withdrawalData['amount_kobo'],
+            'status'        => 'completed',
+            'message'       => "Your withdrawal of ₦{$amount} has been successfully processed.",
+            'processed_at'  => now(),
         ]);
     }
 
-    public function toArray($notifiable)
+    public function toArray($notifiable): array
     {
         return $this->toDatabase($notifiable);
     }

@@ -10,20 +10,22 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 
 class SendPurchaseNotification implements ShouldQueue
 {
+    public int $tries   = 3;
+    public int $backoff = 60;
+
     public function handle(LandUnitsPurchased $event): void
     {
         $user = User::find($event->userId);
         if (! $user) return;
 
-        // Fetch the most recent transaction for this purchase
-        $transaction = Transaction::where('user_id', $event->userId)
-            ->where('land_id', $event->landId)
-            ->where('type', 'purchase')
-            ->where('amount_kobo', $event->totalCost)
-            ->latest()
-            ->first();
-
-        if (!$transaction) return;
+        $transaction = Transaction::where('reference', $event->reference)->first();
+        if (! $transaction) {
+            Log::warning('SendPurchaseNotification: transaction not found', [
+                'reference' => $event->reference,
+                'user_id'   => $event->userId,
+            ]);
+            return;
+        }
 
         $user->notify(new PurchaseConfirmed($transaction));
     }
