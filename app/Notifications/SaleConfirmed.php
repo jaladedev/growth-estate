@@ -7,6 +7,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Notifications\Messages\BroadcastMessage;
+use Illuminate\Support\Facades\Log;
 
 class SaleConfirmed extends Notification implements ShouldQueue
 {
@@ -33,7 +34,7 @@ class SaleConfirmed extends Notification implements ShouldQueue
 
     public function via($notifiable): array
     {
-        return ['mail', 'database', 'broadcast'];
+        return ['database', 'broadcast', 'mail'];
     }
 
     public function toMail($notifiable): MailMessage
@@ -91,5 +92,17 @@ class SaleConfirmed extends Notification implements ShouldQueue
     public function toArray($notifiable): array
     {
         return $this->toDatabase($notifiable);
+    }
+
+    /**
+     * Handle notification delivery failure gracefully.
+     * Mail failures must never surface as sale errors.
+     */
+    public function failed(\Throwable $exception): void
+    {
+        Log::warning('SaleConfirmed notification delivery failed', [
+            'reference' => $this->transactionData['reference'] ?? null,
+            'error'     => $exception->getMessage(),
+        ]);
     }
 }

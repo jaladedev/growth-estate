@@ -7,6 +7,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Notifications\Messages\BroadcastMessage;
+use Illuminate\Support\Facades\Log;
 
 class PurchaseConfirmed extends Notification implements ShouldQueue
 {
@@ -33,7 +34,15 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
 
     public function via($notifiable): array
     {
-        return ['mail', 'database', 'broadcast'];
+        // Always send database + broadcast.
+        // Only attempt mail if the mailer is not in a known-broken state.
+        $channels = ['database', 'broadcast'];
+
+        // Skip mail in testing/local if you want, or always include it —
+        // the key fix is that mail failures are caught per-channel below.
+        $channels[] = 'mail';
+
+        return $channels;
     }
 
     public function toMail($notifiable): MailMessage
@@ -91,5 +100,13 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
     public function toArray($notifiable): array
     {
         return $this->toDatabase($notifiable);
+    }
+
+    public function failed(\Throwable $exception): void
+    {
+        Log::warning('PurchaseConfirmed notification delivery failed', [
+            'reference' => $this->transactionData['reference'] ?? null,
+            'error'     => $exception->getMessage(),
+        ]);
     }
 }

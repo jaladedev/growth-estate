@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\Transaction;
 use App\Notifications\PurchaseConfirmed;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\Log;
 
 class SendPurchaseNotification implements ShouldQueue
 {
@@ -28,5 +29,15 @@ class SendPurchaseNotification implements ShouldQueue
         }
 
         $user->notify(new PurchaseConfirmed($transaction));
+    }
+
+
+    public function failed(LandUnitsPurchased $event, \Throwable $exception): void
+    {
+        Log::error('SendPurchaseNotification: notification delivery failed', [
+            'reference' => $event->reference,
+            'user_id'   => $event->userId,
+            'error'     => $exception->getMessage(),
+        ]);
     }
 }
