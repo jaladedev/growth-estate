@@ -4,16 +4,17 @@ namespace App\Notifications;
 
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Notifications\Messages\BroadcastMessage;
-use Illuminate\Support\Facades\Log;
 
 class SaleConfirmed extends Notification implements ShouldQueue
 {
     use Queueable;
 
-    public int $tries   = 3;
+    public int $tries   = 1;
     public int $backoff = 60;
 
     protected array $transactionData;
@@ -21,14 +22,14 @@ class SaleConfirmed extends Notification implements ShouldQueue
     public function __construct($transaction)
     {
         $this->transactionData = [
-            'id'            => $transaction->id,
-            'units'         => $transaction->units,
-            'amount_kobo'   => $transaction->amount_kobo,
-            'reference'     => $transaction->reference ?? null,
-            'land_title'    => $transaction->land?->title ?? null,
-            'date'          => $transaction->transaction_date
-                               ? \Carbon\Carbon::parse($transaction->transaction_date)->toFormattedDateString()
-                               : now()->toFormattedDateString(),
+            'id'          => $transaction->id,
+            'units'       => $transaction->units,
+            'amount_kobo' => $transaction->amount_kobo,
+            'reference'   => $transaction->reference ?? null,
+            'land_title'  => $transaction->land?->title ?? null,
+            'date'        => $transaction->transaction_date
+                ? \Carbon\Carbon::parse($transaction->transaction_date)->toFormattedDateString()
+                : now()->toFormattedDateString(),
         ];
     }
 
@@ -37,43 +38,33 @@ class SaleConfirmed extends Notification implements ShouldQueue
         return ['database', 'broadcast', 'mail'];
     }
 
-    public function toMail($notifiable): MailMessage
-    {
-        $units       = $this->transactionData['units'];
-        $amount      = number_format($this->transactionData['amount_kobo'] / 100, 2);
-        $land        = $this->transactionData['land_title'] ?? 'your property';
-        $reference   = $this->transactionData['reference'];
-        $date        = $this->transactionData['date'];
-        $appName     = config('app.name');
-        $walletUrl   = rtrim(config('app.frontend_url'), '/') . '/wallet';
-
-        return (new MailMessage)
-            ->subject("Sale Confirmed – {$units} unit(s) of {$land}")
-            ->greeting('Hello ' . $notifiable->name . ',')
-            ->line("Your sale has been processed successfully. Here is a summary:")
-            ->line("**Property:** {$land}")
-            ->line("**Units sold:** {$units}")
-            ->line("**Amount received:** ₦{$amount}")
-            ->line("**Reference:** {$reference}")
-            ->line("**Date:** {$date}")
-            ->action('View Wallet', $walletUrl)
-            ->line("The proceeds have been credited to your main wallet and are available for withdrawal.")
-            ->line("Thank you for transacting with {$appName}!")
-            ->salutation("Best regards, The {$appName} Team");
-    }
-
     public function toDatabase($notifiable): array
     {
-        return [
-            'transaction_id' => $this->transactionData['id'],
-            'units'          => $this->transactionData['units'],
-            'amount_kobo'    => $this->transactionData['amount_kobo'],
-            'land_title'     => $this->transactionData['land_title'],
-            'reference'      => $this->transactionData['reference'],
-            'message'        => "Your sale of {$this->transactionData['units']} unit(s) of "
-                                . ($this->transactionData['land_title'] ?? 'property')
-                                . " has been confirmed.",
-        ];
+        $key = 'notif:sale:db:' . $this->transactionData['reference'];
+
+        $lock = Cache::lock($key, 120);
+
+        if (! $lock->get()) {
+            Log::info('SaleConfirmed duplicate DB notification prevented', [
+                'reference' => $this->transactionData['reference'],
+            ]);
+            return [];
+        }
+
+        try {
+            return [
+                'transaction_id' => $this->transactionData['id'],
+                'units'          => $this->transactionData['units'],
+                'amount_kobo'    => $this->transactionData['amount_kobo'],
+                'land_title'     => $this->transactionData['land_title'],
+                'reference'      => $this->transactionData['reference'],
+                'message'        => "Your sale of {$this->transactionData['units']} unit(s) of "
+                    . ($this->transactionData['land_title'] ?? 'property')
+                    . " has been confirmed.",
+            ];
+        } finally {
+            $lock->release();
+        }
     }
 
     public function toBroadcast($notifiable): BroadcastMessage
@@ -89,19 +80,24 @@ class SaleConfirmed extends Notification implements ShouldQueue
         ]);
     }
 
-    public function toArray($notifiable): array
+    public function toMail($notifiable): MailMessage
     {
-        return $this->toDatabase($notifiable);
+        $data = (object) array_merge($this->transactionData, [
+            'user' => $notifiable,
+            'land' => isset($this->transactionData['land_title'])
+                ? (object) ['title' => $this->transactionData['land_title']]
+                : null,
+        ]);
+
+        return (new MailMessage)
+            ->subject("Sale Confirmed – {$this->transactionData['units']} unit(s) of " . ($this->transactionData['land_title'] ?? 'your property'))
+            ->view('emails.sale_confirmed', ['transaction' => $data]);
     }
 
-    /**
-     * Handle notification delivery failure gracefully.
-     * Mail failures must never surface as sale errors.
-     */
     public function failed(\Throwable $exception): void
     {
-        Log::warning('SaleConfirmed notification delivery failed', [
-            'reference' => $this->transactionData['reference'] ?? null,
+        Log::warning('SaleConfirmed notification failed', [
+            'reference' => $this->transactionData['reference'],
             'error'     => $exception->getMessage(),
         ]);
     }

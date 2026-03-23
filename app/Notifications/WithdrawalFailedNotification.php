@@ -13,7 +13,7 @@ class WithdrawalFailedNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
-    public int $tries   = 3;
+    public int $tries   = 1;
     public int $backoff = 60;
 
     protected array $withdrawalData;
@@ -61,11 +61,6 @@ class WithdrawalFailedNotification extends Notification implements ShouldQueue
                                . number_format($this->withdrawalData['amount_kobo'] / 100, 2)
                                . " failed. The funds have been returned to your wallet.",
         ];
-    }
-
-    public function toArray($notifiable): array
-    {
-        return $this->toDatabase($notifiable);
     }
 
     /**

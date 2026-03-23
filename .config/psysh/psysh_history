@@ -51,3 +51,31 @@ echo strlen($key)
 echo bin2hex($key[-1]);
 var_dump($key);
 exit
+exit
+Mail::raw('Test Mailhog email', function($m){ $m->to('test@e.com')->subject('test);});
+Mail::raw('Test Mailhog email', function($m){ $m->to('test@example.com')->subject('test);});
+Mail::raw('Test Mailhog email', function($m){ $m->to('test@e.com')->subject('test');});
+exit
+Mail::raw('Test Mailhog email', function($m){ $m->to('test@e.com')->subject('test');});
+exit
+Mail::raw('Test Mailhog email', function($m){ $m->to('test@e.com')->subject('test');});
+exit
+Mail::raw('Test Mailhog email', function($m){ $m->to('test@e.com')->subject('test');});
+exit
+Mail::raw('Test Mailhog email', function($m){ $m->to('test@e.com')->subject('test');});
+exit
+Mail::raw('Test Mailhog email', function($m){ $m->to('test@e.com')->subject('test');});
+config('mail.mailers.smtp.host');
+config('mail.mailers.smtp.port');
+config('mail.mailers.smtp.port');
+Mail::raw('Test Mailhog email', function($m){ $m->to('test@e.com')->subject('test');});
+config('mail.mailers.smtp.host');
+config('mail.mailers.smtp.port');
+config('mail.mailers.smtp.port');
+config('mail.mailers.smtp.port');
+config('mail.mailers.smtp.port');
+Mail::raw('Test', function ($m) { $m->to('test@me.com')-subject('test'); });
+Mail::raw('Test', function ($m) { $m->to('test@me.com')-subject('test'); });
+Mail::to('you@gg.com')->send(new \App\Mail\PurchaseConfirmedMail(\App\Models\Transaction::first()));
+use Illuminate\Support\Facades\Mail;
+Mail::to('you@gg.com')->send(new \App\Mail\PurchaseConfirmedMail(\App\Models\Transaction::first()));

@@ -19,6 +19,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      mailhog:
+        condition: service_healthy
     networks:
       - laravel
 
@@ -73,7 +75,7 @@ services:
     volumes:
       - ./:/var/www/html
       - /var/www/html/vendor
-    command: php artisan queue:work --sleep=3 --tries=3 --timeout=90
+    command: php artisan queue:work redis --queue=emails,default --sleep=3 --tries=3 --timeout=90
     depends_on:
       db:
         condition: service_healthy
@@ -132,6 +134,11 @@ services:
       - "8025:8025"
     networks:
       - laravel
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 1025 || exit 1"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
 
 networks:
   laravel:
