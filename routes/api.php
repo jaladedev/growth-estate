@@ -19,6 +19,8 @@
     use App\Http\Controllers\UserController;
     use App\Http\Controllers\TransactionController;
     use App\Http\Controllers\WithdrawalController;
+    use App\Http\Controllers\CertificateController;
+    use App\Http\Controllers\MarketplaceController;
     use Illuminate\Support\Facades\Route;
 
 
@@ -42,6 +44,13 @@
 
     Route::get('/support/faqs',           [SupportController::class, 'faqs']);
     Route::post('/support/tickets/guest', [SupportController::class, 'storeGuestTicket']);
+
+    // Public Certificate verification 
+    Route::get('/verify/{certNumber}', [CertificateController::class, 'verify']);
+
+    // ── Public browsing ───────────────────────────────────────────────────────
+    Route::get('marketplace/',                  [MarketplaceController::class, 'index']);
+    Route::get('marketplace/{listing}',         [MarketplaceController::class, 'show']);
 
     // ─────────────────────────────────────────────────────────────────────────────
 
@@ -92,6 +101,45 @@
             Route::get('/lands/{landId}/purchase/preview', [PurchaseController::class, 'preview']);
             Route::post('/lands/{land}/purchase', [PurchaseController::class, 'purchase'])->middleware('check.pin');
             Route::post('/lands/{land}/sell',     [PurchaseController::class, 'sellUnits'])->middleware('check.pin');
+
+            // Certificates
+            Route::prefix('certificates')->group(function () {
+                Route::get('/',                          [CertificateController::class, 'index']);
+                Route::get('/{certNumber}',              [CertificateController::class, 'show']);
+                Route::get('/{certNumber}/download',     [CertificateController::class, 'download']);
+            });
+            //Marketplace
+            
+            Route::prefix('marketplace')->group(function () {
+ 
+                  // My activity
+                Route::get('/my/listings', [MarketplaceController::class, 'myListings']);
+                Route::get('/my/offers',   [MarketplaceController::class, 'myOffers']);
+                Route::get('/my/escrows',  [MarketplaceController::class, 'myEscrows']);
+        
+                // Listings CRUD
+                Route::post('/',              [MarketplaceController::class, 'store']);
+                Route::patch('/{listing}',    [MarketplaceController::class, 'update']);
+                Route::delete('/{listing}',   [MarketplaceController::class, 'destroy']);
+        
+                // Offers
+                Route::post('/{listing}/offers',                         [MarketplaceController::class, 'makeOffer']);
+                Route::patch('/{listing}/offers/{offer}/accept',         [MarketplaceController::class, 'acceptOffer']);
+                Route::patch('/{listing}/offers/{offer}/reject',         [MarketplaceController::class, 'rejectOffer']);
+                Route::patch('/{listing}/offers/{offer}/withdraw',       [MarketplaceController::class, 'withdrawOffer']);
+        
+                // Chat
+                Route::get('/{listing}/messages',  [MarketplaceController::class, 'messages']);
+                Route::post('/{listing}/messages', [MarketplaceController::class, 'sendMessage']);
+        
+                // Escrow
+                Route::get('/escrow/{escrow}',           [MarketplaceController::class, 'showEscrow']);
+                Route::post('/escrow/{escrow}/pay',      [MarketplaceController::class, 'payEscrow'])->middleware('check.pin');
+                Route::post('/escrow/{escrow}/dispute',  [MarketplaceController::class, 'disputeEscrow']);
+        
+                // Admin
+                Route::post('/escrow/{escrow}/complete', [MarketplaceController::class, 'completeEscrow'])->middleware('admin');
+            });
 
             // Portfolio
             Route::prefix('portfolio')->group(function () {
@@ -188,6 +236,13 @@
                     Route::delete('/{ticket}',          [AdminSupportController::class, 'destroy']);
                     Route::get('/{message}/attachment', [AdminSupportController::class, 'attachment']);
                 });
+
+                //Certificates
+                Route::prefix('certificates')->group(function () {
+                    Route::get('/',                          [CertificateController::class, 'adminIndex']);
+                    Route::post('/{certificate}/revoke',     [CertificateController::class, 'revoke']);
+                    Route::post('/{certificate}/regenerate', [CertificateController::class, 'regenerate']);
+                });                
             });
         });
     });
