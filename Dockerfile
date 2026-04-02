@@ -29,7 +29,7 @@ RUN composer install --optimize-autoloader --no-dev \
     && mkdir -p storage/app/public/seed/lands \
     && mkdir -p storage/framework/{cache,sessions,views} \
     && mkdir -p storage/logs \
-    && bootstrap/cache \
+    && mkdir -p bootstrap/cache \
     && if [ -d "database/seeders/images/lands" ]; then \
         cp -r database/seeders/images/lands/* storage/app/public/seed/lands/ 2>/dev/null || true; \
        fi \
