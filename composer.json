@@ -13,7 +13,6 @@
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.9",
         "predis/predis": "*",
-        "simplesoftwareio/simple-qrcode": "^4.2",
         "tymon/jwt-auth": "^2.2",
         "unicodeveloper/laravel-paystack": "^1.2"
     },
