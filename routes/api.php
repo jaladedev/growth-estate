@@ -21,6 +21,7 @@ use App\Http\Controllers\MarketplaceController;
 use App\Http\Controllers\CertificateController;
 use App\Http\Controllers\WaitlistController;
 use App\Http\Controllers\BlogController;
+use App\Http\Controllers\LiveChatController;
 
 use App\Http\Controllers\PaystackWebhookController;
 use App\Http\Controllers\MonnifyWebhookController;
@@ -262,6 +263,15 @@ Route::middleware(['jwt.auth', 'admin'])->prefix('admin')->group(function () {
     Route::patch('/support/tickets/{ticket}/status',            [AdminSupportController::class, 'updateStatus']);
     Route::delete('/support/tickets/{ticket}',                  [AdminSupportController::class, 'destroy']);
     Route::get('/support/stats',                                [SupportController::class, 'adminStats']);
+
+    // ── Live chat (agent) ─────────────────────────────────────────────────────
+    Route::prefix('live-chat')->group(function () {
+        Route::get('/queue',               [LiveChatController::class, 'agentQueue']);
+        Route::post('/{ticket}/claim',     [LiveChatController::class, 'agentClaim']);
+        Route::post('/{ticket}/message',   [LiveChatController::class, 'agentMessage']);
+        Route::post('/{ticket}/typing',    [LiveChatController::class, 'agentTyping']);
+        Route::post('/{ticket}/end',       [LiveChatController::class, 'agentEnd']);
+    });
 
    Route::prefix('blog')->group(function () {
 
