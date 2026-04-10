@@ -31,4 +31,9 @@ class SupportTicket extends Model
     {
         return $this->hasOne(SupportMessage::class, 'ticket_id')->latestOfMany();
     }
+
+    public function agent()
+    {
+        return $this->belongsTo(User::class, 'agent_id');
+    }
 }
