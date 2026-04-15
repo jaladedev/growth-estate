@@ -14,7 +14,7 @@
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.9",
         "predis/predis": "*",
-        "resend/resend-laravel": "*",
+        "resend/resend-laravel": "^1.3",
         "tymon/jwt-auth": "^2.2",
         "unicodeveloper/laravel-paystack": "^1.2"
     },
