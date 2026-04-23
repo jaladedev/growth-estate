@@ -113,8 +113,9 @@ return [
         'name' => env('MAIL_FROM_NAME', 'REU.ng'),
     ],
     
-    'to' => [
-        'address' => env('SUPPORT_ADDRESS', 'support@reu.ng'),
-    ],
+    // 'to' => [
+    //     'address' => env('SUPPORT_ADDRESS', 'support@reu.ng'),
+    //     'name' => env('SUPPORT_NAME', 'REU.ng Support'),
+    // ],
 
 ];
