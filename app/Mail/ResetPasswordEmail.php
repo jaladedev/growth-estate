@@ -27,6 +27,8 @@ class ResetPasswordEmail extends Mailable
                     ->with([
                         'name' => $this->user->name,
                         'verificationCode' => $this->verificationCode,
+                       'logoUrl'          => asset('images/reu-logo.png'),
                     ]);
     }
+   
 }

@@ -28,10 +28,13 @@ class TransactionPinResetMail extends Mailable
     public function build()
     {
         return $this->subject('Transaction PIN Reset Code')
-                    ->markdown('emails.pin_reset')
+                    ->view('emails.pin_reset')
                     ->with([
                         'userName' => $this->user->name,
                         'code' => $this->code,
+                      'logoUrl'          => asset('images/reu-logo.png'),
                     ]);
     }
+
+   
 }

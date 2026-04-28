@@ -35,9 +35,9 @@ class SaleConfirmed extends Notification implements ShouldQueue
 
     public function via($notifiable): array
     {
-        return ['database', 'broadcast', 
-        // 'mail'
-        ];
+        return ['database', 'broadcast',
+        //  'mail'
+         ];
     }
 
     public function toDatabase($notifiable): array
@@ -93,7 +93,7 @@ class SaleConfirmed extends Notification implements ShouldQueue
 
         return (new MailMessage)
             ->subject("Sale Confirmed – {$this->transactionData['units']} unit(s) of " . ($this->transactionData['land_title'] ?? 'your property'))
-            ->view('emails.sale_confirmed', ['transaction' => $data]);
+            ->view('emails.sale_confirmed', ['logoUrl' => asset('images/reu-logo.png'), 'transaction' => $data]);
     }
 
     public function failed(\Throwable $exception): void
@@ -102,5 +102,5 @@ class SaleConfirmed extends Notification implements ShouldQueue
             'reference' => $this->transactionData['reference'],
             'error'     => $exception->getMessage(),
         ]);
-    }
+    }  
 }

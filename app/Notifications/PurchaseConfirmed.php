@@ -96,7 +96,7 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
 
         return (new MailMessage)
             ->subject("Purchase Confirmed – {$this->transactionData['units']} unit(s) of " . ($this->transactionData['land_title'] ?? 'your property'))
-            ->view('emails.purchase_confirmed', ['transaction' => $data]);
+            ->view('emails.purchase_confirmed', ['logoUrl' => asset('images/reu-logo.png'), 'transaction' => $data]);
     }
 
     public function failed(\Throwable $exception): void
