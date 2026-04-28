@@ -26,11 +26,40 @@ use App\Http\Controllers\LiveChatController;
 use App\Http\Controllers\PaystackWebhookController;
 use App\Http\Controllers\MonnifyWebhookController;
 use App\Http\Controllers\OpayWebhookController;
+use Illuminate\Support\Facades\Queue;
 
 // =============================================================================
 // PUBLIC — no authentication required
 // =============================================================================
 
+Route::get('/health', function () {
+    $redis = false;
+    $queue = null;
+    $redisError = null;
+
+    try {
+        \Illuminate\Support\Facades\Redis::ping();
+        $redis = true;
+        $queue = Queue::size('default');
+    } catch (\Exception $e) {
+        $redisError = $e->getMessage();
+    }
+
+    return response()->json([
+        'status'      => $redis ? 'ok' : 'degraded',
+        'redis'       => $redis,
+        'redis_error' => $redisError,
+        'queue_size'  => $queue,
+        'client_ip'    => request()->ip(),
+        'real_ip'      => request()->header('X-Forwarded-For'),
+        'cache_driver'=> config('cache.default'),
+        'timestamp'   => now(),
+    ]);
+});
+
+Route::get('/up', function () {
+    return response()->json(['status' => 'ok'], 200);
+});
 Route::post('/register', [AuthController::class, 'register'])
     ->middleware('throttle:5,60');
 
@@ -73,9 +102,14 @@ Route::post('/waitlist/check', [WaitlistController::class, 'check'])->middleware
 Route::get('/verify/{certNumber}', [CertificateController::class, 'verify'])
     ->middleware('throttle:30,1');
 
+// ── Payment webhooks (server-to-server, no auth, no CSRF) ────────────────────
 Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle']);
 Route::post('/monnify/webhook',  [MonnifyWebhookController::class,  'handle']);
-Route::post('/opay/webhook',     [OpayWebhookController::class,     'handle']);
+Route::post('/opay/webhook',     [OpayWebhookController::class,     'handle']) ->name('opay.webhook');
+
+// ── OPay cashier redirects (no auth — OPay redirects the browser here) ───────
+Route::get('/deposit/opay/return', [OpayWebhookController::class, 'returnUrl'])->name('opay.return');
+Route::get('/deposit/opay/cancel', [OpayWebhookController::class, 'cancel'])->name('opay.cancel');
 
 // =============================================================================
 // AUTHENTICATED — requires valid JWT
@@ -265,12 +299,11 @@ Route::middleware(['jwt.auth', 'admin', 'throttle:60,1'])->prefix('admin')->grou
             Route::delete('/{blogTag}',[BlogController::class, 'destroyTag']);
         });
 
-        // FIX: static routes before parameterised — GET '/' and POST '/' first
         Route::get('/',  [BlogController::class, 'adminIndex']);
         Route::post('/', [BlogController::class, 'store']);
 
         Route::get('/{blogPost}',    [BlogController::class, 'adminShow'])->whereNumber('blogPost');
-        Route::put('/{blogPost}',    [BlogController::class, 'update'])->whereNumber('blogPost');   
+        Route::put('/{blogPost}',    [BlogController::class, 'update'])->whereNumber('blogPost');
         Route::delete('/{blogPost}', [BlogController::class, 'destroy'])->whereNumber('blogPost');
     });
 
