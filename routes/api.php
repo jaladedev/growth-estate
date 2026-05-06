@@ -22,7 +22,7 @@ use App\Http\Controllers\CertificateController;
 use App\Http\Controllers\WaitlistController;
 use App\Http\Controllers\BlogController;
 use App\Http\Controllers\LiveChatController;
-
+use App\Http\Controllers\PurchaseController;
 use App\Http\Controllers\PaystackWebhookController;
 use App\Http\Controllers\MonnifyWebhookController;
 use App\Http\Controllers\OpayWebhookController;
@@ -161,8 +161,8 @@ Route::middleware(['jwt.auth'])->group(function () {
 
         // ── Transactions ──────────────────────────────────────────────────────
         Route::get('/transactions/user',      [TransactionController::class, 'userTransactions']);
-        Route::post('/lands/{land}/purchase', [TransactionController::class, 'purchase']);
-        Route::post('/lands/{land}/sell',     [TransactionController::class, 'sell']);
+        Route::post('/lands/{land}/purchase', [PurchaseController::class, 'purchase']);
+        Route::post('/lands/{land}/sell',     [PurchaseController::class, 'sellUnits']);
 
         // ── Portfolio ─────────────────────────────────────────────────────────
         Route::get('/portfolio/summary',     [PortfolioController::class, 'summary']);
