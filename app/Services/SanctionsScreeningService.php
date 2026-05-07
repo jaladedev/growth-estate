@@ -20,7 +20,7 @@ class SanctionsScreeningService
     /**
      * Screen a user against all loaded sanctions lists.
      */
-    public function screen(User $user, string $trigger = 'manual'): UserScreening
+   public function screen(User $user, string $trigger = 'manual'): UserScreening
     {
         $namesToCheck = $this->buildNameVariants($user);
         $matches      = [];
@@ -32,7 +32,6 @@ class SanctionsScreeningService
             foreach ($hits as $entry) {
                 $score = $this->fuzzyScore($normalized, $entry->full_name_normalized);
 
-                // Also check aliases
                 foreach ($entry->aliases_normalized ?? [] as $alias) {
                     $aliasScore = $this->fuzzyScore($normalized, $alias);
                     $score      = max($score, $aliasScore);
@@ -53,7 +52,6 @@ class SanctionsScreeningService
             }
         }
 
-        // Deduplicate by entry ID, keep highest score
         $matches = collect($matches)
             ->groupBy('sanctions_entry_id')
             ->map(fn($g) => $g->sortByDesc('score')->first())
@@ -62,15 +60,30 @@ class SanctionsScreeningService
 
         $status = $this->resolveStatus($matches);
 
-        $screening = UserScreening::create([
-            'user_id' => $user->id,
-            'status'  => $status,
-            'trigger' => $trigger,
-            'matches' => $matches,
-        ]);
+        // Upsert into any existing unreviewed screening rather than stacking duplicates
+        $existing = UserScreening::where('user_id', $user->id)
+            ->whereIn('status', ['flagged', 'blocked'])
+            ->whereNull('reviewed_at')
+            ->first();
+
+        if ($existing) {
+            $existing->update([
+                'trigger' => $trigger,
+                'matches' => $matches,
+                'status'  => $status,
+            ]);
+            $screening = $existing;
+        } else {
+            $screening = UserScreening::create([
+                'user_id' => $user->id,
+                'status'  => $status,
+                'trigger' => $trigger,
+                'matches' => $matches,
+            ]);
+        }
 
         $user->update([
-            'screening_status' => $status,
+            'screening_status' => $user->screening_status === 'blocked' ? 'blocked' : $status,
             'last_screened_at' => now(),
         ]);
 
@@ -80,24 +93,30 @@ class SanctionsScreeningService
 
         return $screening;
     }
-
     /**
      * Build all name variants to check — full name, reversed, with/without middle name.
      */
-   private function buildNameVariants(User $user): array
+    private function buildNameVariants(User $user): array
     {
-        // Read full_name from kyc_verifications if available
         $kycName = \App\Models\KycVerification::where('user_id', $user->id)
             ->where('status', 'approved')
             ->value('full_name');
 
-        $variants = array_filter(array_unique([
-            $kycName,
-            $user->name,
-            $kycName ? implode(' ', array_reverse(explode(' ', $kycName))) : null,
-        ]));
+        $reversed = $kycName
+            ? implode(' ', array_reverse(explode(' ', $kycName)))
+            : null;
 
-        return array_values($variants);
+        $variants = array_values(array_unique(array_filter(
+            [$kycName, $user->name, $reversed],
+            fn($v) => is_string($v) && trim($v) !== ''
+        )));
+
+        // Safety: if we have nothing to screen, throw rather than silently clearing
+        if (empty($variants)) {
+            throw new \RuntimeException("User {$user->id} has no name to screen.");
+        }
+
+        return $variants;
     }
 
     /**
@@ -113,6 +132,9 @@ class SanctionsScreeningService
         if (strlen($firstWord) < 2) {
             return collect();
         }
+
+        // Escape LIKE wildcards before interpolation
+        $firstWord = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $firstWord);
 
         return SanctionsEntry::where('full_name_normalized', 'like', "%{$firstWord}%")
             ->orWhereJsonContains('aliases_normalized', $normalizedName)
@@ -156,12 +178,14 @@ class SanctionsScreeningService
         if (empty($matches)) return 'clear';
 
         foreach ($matches as $match) {
+            // PEP hits always go to manual review regardless of score.
+            // Only hard sanctions (non-PEP) at >= BLOCK_THRESHOLD are auto-blocked.
             if (! $match['is_pep'] && $match['score'] >= self::BLOCK_THRESHOLD) {
-                return 'blocked'; // Hard sanctions hit
+                return 'blocked';
             }
         }
 
-        return 'flagged'; // PEP or lower-confidence hit → manual review
+        return 'flagged';
     }
 
     /**
@@ -181,11 +205,19 @@ class SanctionsScreeningService
                 'match_count'  => count($screening->matches ?? []),
                 'top_score'    => collect($screening->matches)->max('score'),
                 'screening_id' => $screening->id,
+                'review_url'   => url("/admin/compliance/screenings/{$screening->id}"),
             ]
         );
 
         if ($screening->status === 'blocked') {
             $user->update(['is_suspended' => true]);
+
+            // Notify user their account has been suspended
+            $user->notify(new \App\Notifications\AccountSuspendedNotification());
+        } else {
+            // Notify user their account is under review (don't reveal why)
+            $user->notify(new \App\Notifications\AccountUnderReviewNotification());
         }
     }
+
 }

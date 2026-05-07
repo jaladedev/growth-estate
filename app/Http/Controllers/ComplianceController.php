@@ -10,6 +10,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\ScreenUserJob;
 use App\Models\User;
 use App\Models\UserScreening;
+use App\Models\SanctionsEntry;
 use App\Services\SanctionsScreeningService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -51,14 +52,23 @@ class ComplianceController extends Controller
     {
         $request->validate(['notes' => 'required|string|min:10']);
 
-        $screening->update([
-            'status'      => 'clear',
-            'reviewed_by' => $request->user()->name,
-            'reviewed_at' => now(),
-            'notes'       => $request->notes,
-        ]);
+        DB::transaction(function () use ($request, $screening) {
+            // Lock the row for the duration of the transaction
+            $screening = UserScreening::lockForUpdate()->findOrFail($screening->id);
 
-        $screening->user->update(['screening_status' => 'clear']);
+            if ($screening->reviewed_at !== null) {
+                abort(409, 'This screening has already been reviewed.');
+            }
+
+            $screening->update([
+                'status'      => 'clear',
+                'reviewed_by' => $request->user()->name,
+                'reviewed_at' => now(),
+                'notes'       => $request->notes,
+            ]);
+
+            $screening->user->update(['screening_status' => 'clear']);
+        });
 
         return response()->json(['success' => true, 'message' => 'User cleared after manual review.']);
     }
@@ -71,19 +81,24 @@ class ComplianceController extends Controller
     {
         $request->validate(['notes' => 'required|string|min:10']);
 
-        $screening->update([
-            'status'      => 'blocked',
-            'reviewed_by' => $request->user()->name,
-            'reviewed_at' => now(),
-            'notes'       => $request->notes,
-        ]);
+        DB::transaction(function () use ($request, $screening) {
+            // Lock the row for the duration of the transaction
+            $screening = UserScreening::lockForUpdate()->findOrFail($screening->id);
+
+            $screening->update([
+                'status'      => 'blocked',
+                'reviewed_by' => $request->user()->name,
+                'reviewed_at' => now(),
+                'notes'       => $request->notes,
+            ]);
 
         $screening->user->update([
             'screening_status' => 'blocked',
             'is_suspended'     => true,
         ]);
 
-        return response()->json(['success' => true, 'message' => 'User blocked.']);
+            return response()->json(['success' => true, 'message' => 'User blocked.']);
+        });
     }
 
     /**
@@ -112,7 +127,7 @@ class ComplianceController extends Controller
                 'flagged_users'       => User::where('screening_status', 'flagged')->count(),
                 'clear_users'         => User::where('screening_status', 'clear')->count(),
                 'never_screened'      => User::whereNull('last_screened_at')->count(),
-                'sanctions_entries'   => \App\Models\SanctionsEntry::count(),
+                'sanctions_entries'   => SanctionsEntry::count(),
                 'last_sync'           => \DB::table('sanctions_list_syncs')->latest('synced_at')->first(),
             ],
         ]);

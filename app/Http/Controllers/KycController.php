@@ -262,10 +262,15 @@ class KycController extends Controller
                 'verified_by'      => auth()->id(),
                 'rejection_reason' => null,
             ]);
-
+            
             $kyc->user->update(['is_kyc_verified' => true]);
-        });
 
+            // Dispatches only after commit, so the worker always sees approved KYC
+            DB::afterCommit(function () use ($kyc) {
+                ScreenUserJob::dispatch($kyc->user, 'kyc_approved')->onQueue('default');
+            });
+        });
+        
         return response()->json([
             'success' => true,
             'message' => 'KYC approved successfully',
