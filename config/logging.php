@@ -74,9 +74,8 @@ return [
         ],
 
         'telegram' => [
-            'driver'  => 'custom',
-            'via'     => \App\Logging\TelegramLogger::class,
-            'level'   => 'error',
+            'driver' => 'custom',
+            'via'    => \App\Logging\TelegramLogger::class,
         ],
 
         'mail_ops' => [
