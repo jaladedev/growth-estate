@@ -38,6 +38,7 @@ class KycVerification extends Model
         'date_of_birth' => 'date',
         'verified_at'   => 'datetime',
         'is_pep'        => 'boolean',
+        'pep_relationship' => 'string',
     ];
 
     protected $hidden = [

@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Models\UserScreening;
 use App\Services\SanctionsScreeningService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ComplianceController extends Controller
 {

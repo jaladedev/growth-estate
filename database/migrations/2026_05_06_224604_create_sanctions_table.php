@@ -8,10 +8,10 @@ return new class extends Migration {
 
     public function up(): void
     {
-        // ── Sanctions list entries (downloaded from OFAC, UN, EU, OpenSanctions) ──
+        // ── Sanctions list entries (downloaded from OFAC, UN, EU) ──
         Schema::create('sanctions_entries', function (Blueprint $table) {
             $table->id();
-            $table->string('source');                    // ofac | un | eu | opensanctions
+            $table->string('source');                    // ofac | un | eu
             $table->string('source_id')->nullable();     // original ID from the list
             $table->string('entry_type');                // individual | entity | vessel | aircraft
             $table->string('full_name');

@@ -169,7 +169,7 @@ class SanctionsScreeningService
      */
     private function escalate(User $user, UserScreening $screening): void
     {
-        Log::channel('slack')->warning(
+        Log::channel('telegram')->warning(
             $screening->status === 'blocked'
                 ? '🚨 SANCTIONS MATCH — User blocked'
                 : '⚠️ PEP/Sanctions flag — Manual review required',

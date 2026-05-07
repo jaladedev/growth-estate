@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Services\Sanctions\Importers\EuImporter;
 use App\Services\Sanctions\Importers\OfacImporter;
 use App\Services\Sanctions\Importers\UnImporter;
+use App\Models\SanctionsEntry;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -37,19 +38,21 @@ class SyncSanctionsLists extends Command
             $start = now();
 
             try {
-                $count = (new $class())->import();
+                $countBefore = SanctionsEntry::where('source', $key)->count();
+                $count       = (new $class())->import();
+                $countAfter  = SanctionsEntry::where('source', $key)->count();
+                $deleted     = max(0, $countBefore - $countAfter);
 
                 DB::table('sanctions_list_syncs')->insert([
                     'source'           => $key,
                     'status'           => 'success',
                     'records_imported' => $count,
-                    'records_deleted'  => 0,
+                    'records_deleted'  => $deleted,
                     'synced_at'        => now(),
                 ]);
 
                 $elapsed = now()->diffInSeconds($start);
-                $this->info("  {$key}: {$count} records imported in {$elapsed}s");
-
+                $this->info("  ✓ {$key}: {$count} imported, {$deleted} delisted, {$elapsed}s");
             } catch (\Throwable $e) {
                 DB::table('sanctions_list_syncs')->insert([
                     'source'    => $key,

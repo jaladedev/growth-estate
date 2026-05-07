@@ -8,8 +8,7 @@ use Illuminate\Support\Facades\Schedule;
 Schedule::command('sanctions:sync --source=ofac')->dailyAt('02:00');
 Schedule::command('sanctions:sync --source=un')->dailyAt('02:30');
 
-// OpenSanctions updates daily — sync at 3am
-Schedule::command('sanctions:sync --source=opensanctions')->dailyAt('03:00');
+Schedule::command('sanctions:sync --source=eu')->dailyAt('02:45');
 
 // Re-screen all users monthly
 Schedule::command('sanctions:rescreen --days=30')->monthlyOn(1, '04:00');
