@@ -170,20 +170,10 @@ class AdminSupportController extends Controller
         if (!$message->attachment_path) {
             return response()->json(['message' => 'No attachment on this message.'], 404);
         }
-
-        if (!Storage::disk('private')->exists($message->attachment_path)) {
+        
+        if (!Storage::disk('r2')->exists($message->attachment_path)) {
             return response()->json(['message' => 'File not found.'], 404);
         }
-
-        return Storage::disk('private')->response($message->attachment_path);
+        return Storage::disk('r2')->response($message->attachment_path);
     }
-
-    //cloudflare
-    // public function attachment(SupportMessage $message)
-    // {
-    //     if (!Storage::disk('r2')->exists($message->attachment_path)) {
-    //         return response()->json(['message' => 'File not found.'], 404);
-    //     }
-    //     return Storage::disk('r2')->response($message->attachment_path);
-    // }
 }
